@@ -22,6 +22,9 @@ warehouse_prod:    # PROD: the live warehouse that the Metabase dashboard reads
   user: b2b
   password: b2b_local
 
+# The time zone the business works in. The made-up orders and log lines are dated in this zone.
+timezone: America/Argentina/Buenos_Aires
+
 # The web server log. It is outside the project folder, like the log of a real web server.
 log_file: ~/b2b_weblogs/access.log
 ip_country_file: sources/csv/ip_country.csv

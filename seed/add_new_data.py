@@ -9,10 +9,10 @@ It adds 20 new orders (placed right now) to the B2B database and appends 30 new 
 """
 
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from seed.seed_weblogs import PAGES, USER_AGENTS
-from sources.postgres.connection import LOG_FILE, connect_source
+from sources.postgres.connection import LOG_FILE, connect_source, local_now
 
 NEW_ORDERS = 20
 NEW_VISITS = 30
@@ -38,10 +38,10 @@ def main():
         for _ in range(NEW_ORDERS):
             order_id += 1
             company_id = random.choice(list(customer_of_company))
-            # the order time is "now" in Buenos Aires, the time zone the warehouse works in
+            # the order time is "now" in the business time zone
             source.execute(
-                "INSERT INTO b2b.orders VALUES (%s, %s, %s, now() AT TIME ZONE 'America/Argentina/Buenos_Aires')",
-                [order_id, company_id, customer_of_company[company_id]],
+                "INSERT INTO b2b.orders VALUES (%s, %s, %s, %s)",
+                [order_id, company_id, customer_of_company[company_id], local_now().replace(tzinfo=None)],
             )
             chosen = random.sample(catalog_of_company[company_id], random.randint(1, 3))
             for line_number, (product_id, price) in enumerate(chosen, start=1):
@@ -54,7 +54,7 @@ def main():
         usernames = [row[0] for row in source.execute("SELECT username FROM b2b.users")]
 
     # --- new visits: appended to the end of the web log, like a web server does
-    page_time = datetime.now()
+    page_time = local_now()
     with open(LOG_FILE, "a") as log_file:
         for _ in range(NEW_VISITS):
             username = random.choice(usernames)
@@ -62,7 +62,7 @@ def main():
             user_agent = random.choices(list(USER_AGENTS), list(USER_AGENTS.values()))[0]
             for _ in range(random.randint(1, 3)):
                 page_time += timedelta(seconds=random.randint(1, 20))
-                stamp = page_time.strftime("%d/%b/%Y:%H:%M:%S -0300")
+                stamp = page_time.strftime("%d/%b/%Y:%H:%M:%S %z")
                 page = random.choice(PAGES)
                 log_file.write(f'{ip} - {username} [{stamp}] "GET {page} HTTP/1.1" 200 1000 "-" "{user_agent}"\n')
     print(f"Appended {NEW_VISITS} new visits to {LOG_FILE}")
