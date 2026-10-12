@@ -115,3 +115,19 @@ def test_every_data_quality_check_finds_zero_bad_rows():
         for sql_file in dq_files:
             for check_name, bad_rows in executor.query_sql_file(warehouse, sql_file):
                 assert bad_rows == 0, check_name
+
+
+# --- Incremental load ---
+
+
+def test_each_watermark_matches_what_is_loaded_in_raw():
+    saved = dict(query("SELECT table_name, value FROM etl.watermark"))
+    assert set(saved) == {"raw_orders", "raw_order_items", "raw_web_logs"}
+    assert saved["raw_orders"] == str(query("SELECT max(order_id::integer) FROM raw.raw_orders")[0][0])
+    assert saved["raw_order_items"] == str(query("SELECT max(order_id::integer) FROM raw.raw_order_items")[0][0])
+    assert saved["raw_web_logs"] == query("SELECT max(log_time::timestamptz) FROM raw.raw_web_logs")[0][0].isoformat()
+
+
+def test_incremental_loads_never_load_an_order_twice():
+    doubles = query("SELECT count(*) FROM (SELECT order_id FROM raw.raw_orders GROUP BY 1 HAVING count(*) > 1) AS d")
+    assert doubles[0][0] == 0

@@ -41,7 +41,7 @@ about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The 
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
 | `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
 | `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
-| `seed/` | Scripts that generate the source data and the log; `change_company.py` makes one change to show the history |
+| `seed/` | Scripts that generate the source data and the log; `change_company.py` makes one change to show the history; `add_new_data.py` adds new orders and visits for an incremental load |
 | `sql/setup.sql` | Creates the schemas and the `etl` tables |
 | `sql/migrations/` | One-time changes to tables that already exist; each file runs once per warehouse |
 | `sql/raw/` | Empty copies of the source tables, every column as text |
@@ -49,7 +49,7 @@ about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The 
 | `sql/dimensions/`, `sql/facts/` | The star schema (schema `dw`) |
 | `sql/marts/` | Report-ready views (schema `mart`) |
 | `dq/` | Data quality checks that must all return 0 |
-| `pipeline/` | Four small Python helpers: copy a table, parse the log, run a SQL file, write the run log |
+| `pipeline/` | Small Python helpers: copy a table, parse the log, run a SQL file, write the run log, keep the watermarks |
 | `tests/` | A few simple tests |
 
 One rule makes the project easy to find your way in: **the file name is the step name and the table
@@ -168,6 +168,39 @@ moment the source was edited. Only companies keep history; the other dimensions 
 table needs a new shape, a file in `sql/migrations/` does it. `run.py` applies each file once per
 warehouse and records it in `etl.migrations`, so the change reaches prod by itself on the next deploy.
 
+## Incremental load
+
+`python run.py` is the full load: it re-reads everything from the sources. `python run.py --incremental`
+fetches only what is new. It was added after the rest, so its code sits in clearly marked
+`--- Incremental load ---` blocks at the bottom of the files.
+
+Three raw tables keep growing: `raw_orders`, `raw_order_items` and `raw_web_logs`. For each one the
+table `etl.watermark` remembers how far it is loaded (the highest order id, or the latest log time).
+An incremental run:
+
+1. does **not** empty these three tables
+2. reads the watermark and copies only the newer source rows (`copy_new_rows` in
+   `pipeline/extractor.py`, `load_new_log_lines` in `pipeline/log_parser.py`)
+3. saves the new watermark in the same transaction, so a failed step changes nothing and can be retried
+
+The small tables (companies, products, customers) are still copied in full, and everything after raw
+is rebuilt as usual. `etl.run_log.load_type` shows whether a run was `full` or `incremental`.
+
+Try it:
+
+```bash
+python run.py                   # full load; writes the watermarks
+python -m seed.add_new_data     # 20 new orders and 30 new website visits
+python run.py --incremental     # prints how many new rows each table got
+```
+
+What it does not do:
+
+- **A changed old order is not noticed.** The watermark only sees new order ids.
+- **The log file is still read from the start;** only the new lines are loaded.
+- **Staging and the facts are still rebuilt** from raw. The saving is in not re-reading the sources.
+- **A deploy always runs a full load.** With no watermark yet, `--incremental` also falls back to full.
+
 ## Dev, prod and CI/CD
 
 There are two warehouses in the same PostgreSQL server, and two git branches.
@@ -241,7 +274,8 @@ Every time you change a filter, Metabase runs a new query against the `mart` vie
 
 ## Kept simple on purpose
 
-- **Full reload only.** Every run re-reads all the source data. There is no incremental load.
+- **Incremental only up to raw.** An incremental run fetches only new source rows, but staging and the
+  facts are still rebuilt from raw on every run.
 - **Only companies keep history.** The other dimensions are overwritten and use the source ids as keys.
 - **A "login" is one visit of a logged-in user.** The request line is out of scope in the brief, so a
   login page cannot be recognised. Instead, the log lines of one user are grouped: a line starts a new

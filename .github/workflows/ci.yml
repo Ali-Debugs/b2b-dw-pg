@@ -62,3 +62,10 @@ jobs:
           python -m seed.change_company
           python run.py
           python -m pytest -q
+
+      # --- Incremental load ---
+      - name: Add new data and load only the new rows
+        run: |
+          python -m seed.add_new_data
+          python run.py --incremental
+          python -m pytest -q
