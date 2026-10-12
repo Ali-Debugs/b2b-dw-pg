@@ -14,9 +14,9 @@ that does not exist.
 
 import csv
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-from sources.postgres.connection import CONFIG, LOG_FILE, ROOT, connect_source
+from sources.postgres.connection import CONFIG, LOG_FILE, ROOT, connect_source, local_now
 
 SIZES = CONFIG["seed"]
 random.seed(SIZES["random_seed"])
@@ -49,7 +49,7 @@ def main():
         for row in csv.DictReader(csv_file):
             prefixes_of_country.setdefault(row["country_code"], []).append(row["ip_prefix"])
 
-    end = datetime.now() - timedelta(days=1)
+    end = local_now() - timedelta(days=1)
     history_seconds = SIZES["months_of_history"] * 30 * 24 * 3600
 
     # Build every visit; each one gives a few (time, text) log lines.
@@ -71,7 +71,7 @@ def main():
 
         page_time = end - timedelta(seconds=random.randint(0, history_seconds))
         for _ in range(random.randint(1, 6)):
-            stamp = page_time.strftime("%d/%b/%Y:%H:%M:%S -0300")
+            stamp = page_time.strftime("%d/%b/%Y:%H:%M:%S %z")
             page = random.choice(PAGES)
             size = random.randint(200, 9000)
             lines.append((page_time, f'{ip} - {username} [{stamp}] "GET {page} HTTP/1.1" 200 {size} "-" "{user_agent}"'))

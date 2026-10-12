@@ -1,7 +1,9 @@
 """Opens connections to the two databases. Every other file gets its connections from here."""
 
 import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import psycopg
 import yaml
@@ -12,6 +14,11 @@ LOG_FILE = Path(CONFIG["log_file"]).expanduser()  # the web server log
 
 # Which warehouse to use: "dev" (the default) or "prod".  Example:  B2B_ENV=prod python run.py
 ENV = os.environ.get("B2B_ENV", "dev")
+
+
+def local_now():
+    """The current time in the business time zone (config.yaml), not in the computer's own time zone."""
+    return datetime.now(ZoneInfo(CONFIG["timezone"]))
 
 
 def connect_source():

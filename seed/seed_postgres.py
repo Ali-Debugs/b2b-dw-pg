@@ -7,9 +7,9 @@ zero quantity, missing or future order date) so the pipeline has bad data to cat
 """
 
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
-from sources.postgres.connection import CONFIG, ROOT, connect_source
+from sources.postgres.connection import CONFIG, ROOT, connect_source, local_now
 
 SIZES = CONFIG["seed"]
 random.seed(SIZES["random_seed"])  # same seed = same data every time
@@ -41,7 +41,7 @@ def insert_rows(cur, table, rows):
 
 
 def main():
-    today = datetime.now().replace(microsecond=0)
+    today = local_now().replace(tzinfo=None, microsecond=0)  # order dates are stored as local business time
     history_seconds = SIZES["months_of_history"] * 30 * 24 * 3600
 
     # --- companies: the last one gets a broken CUIT -----------------------------------------------

@@ -28,7 +28,8 @@ python -m pytest -q               # 4. check the result
 
 The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
 about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The sizes are in
-`config.yaml`; make them bigger to test volume.
+`config.yaml`; make them bigger to test volume. Orders and log lines are dated in the business
+time zone, which is also set in `config.yaml` (`timezone`), not in the time zone of your computer.
 
 ## What is in each folder
 

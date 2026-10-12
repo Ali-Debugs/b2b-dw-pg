@@ -11,7 +11,7 @@ After the load, dw.dim_company holds two versions of company 10. The old sales s
 name, and the three new orders are under the new name.
 """
 
-from sources.postgres.connection import connect_source
+from sources.postgres.connection import connect_source, local_now
 
 COMPANY_ID = 10
 
@@ -40,10 +40,10 @@ def main():
         order_id = source.execute("SELECT max(order_id) FROM b2b.orders").fetchone()[0]
         for product_id, price in products:
             order_id += 1
-            # the order time is "now" in Buenos Aires, the time zone the warehouse works in
+            # the order time is "now" in the business time zone
             source.execute(
-                "INSERT INTO b2b.orders VALUES (%s, %s, %s, now() AT TIME ZONE 'America/Argentina/Buenos_Aires')",
-                [order_id, COMPANY_ID, customer_id],
+                "INSERT INTO b2b.orders VALUES (%s, %s, %s, %s)",
+                [order_id, COMPANY_ID, customer_id, local_now().replace(tzinfo=None)],
             )
             source.execute("INSERT INTO b2b.order_items VALUES (%s, 1, %s, 5, %s)", [order_id, product_id, price])
         print(f"Added {len(products)} new orders for company {COMPANY_ID}")
