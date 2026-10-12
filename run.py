@@ -95,6 +95,7 @@ def main():
     log.autocommit = True
 
     executor.run_sql_file(log, "sql/setup.sql")
+    executor.run_migrations(warehouse)
     run_id, steps_done = logger.start_run(log)
     print(f"Environment: {ENV}")
     print(f"Run {run_id}" + (f" (continuing, {len(steps_done)} steps already done)" if steps_done else ""))

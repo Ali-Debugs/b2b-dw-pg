@@ -56,3 +56,9 @@ jobs:
 
       - name: Run the tests
         run: python -m pytest -q
+
+      - name: Change a company in the source and load again (tests the history)
+        run: |
+          python -m seed.change_company
+          python run.py
+          python -m pytest -q

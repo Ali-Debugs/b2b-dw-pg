@@ -77,11 +77,11 @@ Defined in `sql/dimensions/` and `sql/facts/`. Two fact tables in the middle, si
 ```mermaid
 erDiagram
     dim_date         ||--o{ fact_sales : date_key
-    dim_company      ||--o{ fact_sales : company_id
+    dim_company      ||--o{ fact_sales : company_key
     dim_end_customer ||--o{ fact_sales : end_customer_id
     dim_product      ||--o{ fact_sales : product_id
     dim_date         ||--o{ fact_logins : date_key
-    dim_company      ||--o{ fact_logins : company_id
+    dim_company      ||--o{ fact_logins : company_key
     dim_device       ||--o{ fact_logins : device_key
     dim_country      ||--o{ fact_logins : country_code
     dim_country      ||--o{ dim_company : country_code
@@ -99,11 +99,15 @@ erDiagram
         text country_name
     }
     dim_company {
-        int company_id PK
+        int company_key PK
+        int company_id
         text cuit
         text company_name
         text country_code FK
         boolean is_supplier
+        date valid_from
+        date valid_to
+        boolean is_current
     }
     dim_product {
         int product_id PK
@@ -127,7 +131,7 @@ erDiagram
         int order_id PK
         int line_number PK
         int date_key FK
-        int company_id FK
+        int company_key FK
         int end_customer_id FK
         int product_id FK
         int quantity
@@ -138,11 +142,13 @@ erDiagram
         int date_key FK
         timestamptz login_time
         text username
-        int company_id FK
+        int company_key FK
         int device_key FK
         text country_code FK
     }
 ```
+
+`dim_company` keeps history: one row per version of a company, each with its own `company_key`.
 
 The lines in the warehouse diagram are logical links. The `dw` tables have primary keys but no
 foreign-key constraints; `dq/referential_integrity.sql` checks on every run that each fact row points to

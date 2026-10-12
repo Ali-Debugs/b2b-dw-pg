@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS etl.step_log (
   error_message text
 );
 
+-- Which files of sql/migrations/ were already applied to this warehouse (each one runs only once).
+CREATE TABLE IF NOT EXISTS etl.migrations (
+  file_name  text PRIMARY KEY,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Every row the pipeline refused, with the reason, so nothing disappears silently.
 CREATE TABLE IF NOT EXISTS etl.rejected_rows (
   step_name   text NOT NULL,

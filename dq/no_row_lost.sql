@@ -47,4 +47,10 @@ UNION ALL
 SELECT 'stg_web_logs: raw rows not all accounted for',
        abs((SELECT count(*) FROM raw.raw_web_logs WHERE username <> '-')
          - (SELECT count(*) FROM staging.stg_web_logs)
-         - (SELECT count(*) FROM etl.rejected_rows WHERE step_name = 'stg_web_logs'));
+         - (SELECT count(*) FROM etl.rejected_rows WHERE step_name = 'stg_web_logs'))
+
+-- every clean order item must reach the fact table: it must match exactly one version of its company
+UNION ALL
+SELECT 'fact_sales: clean order items not all loaded',
+       abs((SELECT count(*) FROM staging.stg_order_items)
+         - (SELECT count(*) FROM dw.fact_sales));

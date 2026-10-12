@@ -8,7 +8,7 @@ WHERE NOT EXISTS (SELECT 1 FROM dw.dim_date d WHERE d.date_key = f.date_key)
 UNION ALL
 SELECT 'fact_sales: company not in dim_company', count(*)
 FROM dw.fact_sales f
-WHERE NOT EXISTS (SELECT 1 FROM dw.dim_company c WHERE c.company_id = f.company_id)
+WHERE NOT EXISTS (SELECT 1 FROM dw.dim_company c WHERE c.company_key = f.company_key)
 
 UNION ALL
 SELECT 'fact_sales: product not in dim_product', count(*)
@@ -28,7 +28,7 @@ WHERE NOT EXISTS (SELECT 1 FROM dw.dim_date d WHERE d.date_key = f.date_key)
 UNION ALL
 SELECT 'fact_logins: company not in dim_company', count(*)
 FROM dw.fact_logins f
-WHERE NOT EXISTS (SELECT 1 FROM dw.dim_company c WHERE c.company_id = f.company_id)
+WHERE NOT EXISTS (SELECT 1 FROM dw.dim_company c WHERE c.company_key = f.company_key)
 
 UNION ALL
 SELECT 'fact_logins: device not in dim_device', count(*)

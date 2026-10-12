@@ -41,8 +41,9 @@ about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The 
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
 | `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
 | `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
-| `seed/` | Scripts that generate the source data and the log |
-| `sql/setup.sql` | Creates the schemas and the three `etl` tables |
+| `seed/` | Scripts that generate the source data and the log; `change_company.py` makes one change to show the history |
+| `sql/setup.sql` | Creates the schemas and the `etl` tables |
+| `sql/migrations/` | One-time changes to tables that already exist; each file runs once per warehouse |
 | `sql/raw/` | Empty copies of the source tables, every column as text |
 | `sql/staging/` | Cleaning rules: good rows go on, bad rows go to `etl.rejected_rows` |
 | `sql/dimensions/`, `sql/facts/` | The star schema (schema `dw`) |
@@ -67,11 +68,12 @@ access.log      ─┘            │
 |---|---|---|
 | Raw | `raw` | Exact copy of each source, all columns text, so nothing can fail to land |
 | Staging | `staging` | Gives every row a `reject_reason`; NULL means good. Good rows get real types |
-| Dimensions | `dw` | `dim_date`, `dim_country`, `dim_company`, `dim_product`, `dim_end_customer`, `dim_device` |
+| Dimensions | `dw` | `dim_date`, `dim_country`, `dim_company` (keeps history), `dim_product`, `dim_end_customer`, `dim_device` |
 | Facts | `dw` | `fact_sales` (one row per order item), `fact_logins` (one row per login) |
 | Marts | `mart` | Two wide views for the dashboard and three views that answer the three reports |
 
-Every run reloads everything (`TRUNCATE` then `INSERT`), so running a step twice gives the same result.
+Every run reloads every table (`TRUNCATE` then `INSERT`), except `dim_company`, which keeps its old
+versions. Running a step twice gives the same result either way.
 
 ## The three reports
 
@@ -136,6 +138,35 @@ The seed scripts put wrong rows in on purpose. After a run, `run.py` prints what
 
 A row is also refused when the row it depends on was refused (for example the orders of a company with
 a broken CUIT). In every staging step: raw rows = good rows + rejected rows.
+
+## Company history (slowly changing dimension, type 2)
+
+`dw.dim_company` remembers how a company looked in the past. When its name, country, CUIT or supplier
+status changes in the source, the load does two things (`sql/dimensions/dim_company.sql`):
+
+1. it closes the current row (`valid_to` = today, `is_current` = false)
+2. it adds a new row with the new values (`valid_from` = today, `is_current` = true)
+
+So one company can have several rows. Each row has its own `company_key`, a key made by the warehouse
+(a surrogate key), because `company_id` repeats on every version. The fact tables store `company_key`,
+picked by date: a sale points to the version that was valid on the day of the order. An old sale keeps
+the name and country the company had then.
+
+Try it:
+
+```bash
+python -m seed.change_company     # renames company 10 and adds three orders dated now
+python run.py
+docker exec b2b-postgres psql -U b2b -d b2b_warehouse_dev -c \
+  "SELECT company_key, company_name, valid_from, valid_to, is_current FROM dw.dim_company WHERE company_id = 10"
+```
+
+The change is only noticed when the warehouse is loaded, so `valid_from` is the load date, not the
+moment the source was edited. Only companies keep history; the other dimensions are overwritten.
+
+**Migrations.** A table that already exists is not changed by `CREATE TABLE IF NOT EXISTS`. When a
+table needs a new shape, a file in `sql/migrations/` does it. `run.py` applies each file once per
+warehouse and records it in `etl.migrations`, so the change reaches prod by itself on the next deploy.
 
 ## Dev, prod and CI/CD
 
@@ -210,9 +241,8 @@ Every time you change a filter, Metabase runs a new query against the `mart` vie
 
 ## Kept simple on purpose
 
-- **Full reload only.** Every run rebuilds every table. There is no incremental load and no history of
-  changes (no slowly changing dimensions).
-- **Source ids are the keys** of the dimensions. That is safe here because no history is kept.
+- **Full reload only.** Every run re-reads all the source data. There is no incremental load.
+- **Only companies keep history.** The other dimensions are overwritten and use the source ids as keys.
 - **A "login" is one visit of a logged-in user.** The request line is out of scope in the brief, so a
   login page cannot be recognised. Instead, the log lines of one user are grouped: a line starts a new
   login when the user's line before it is more than 30 minutes older (`sql/facts/fact_logins.sql`).
