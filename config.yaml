@@ -1,0 +1,28 @@
+# All settings in one place. The passwords are local defaults for the Docker container only.
+
+source:            # the B2B platform database (OLTP)
+  host: localhost
+  port: 5432
+  dbname: b2b_source
+  user: b2b
+  password: b2b_local
+
+warehouse:         # the data warehouse
+  host: localhost
+  port: 5432
+  dbname: b2b_warehouse
+  user: b2b
+  password: b2b_local
+
+log_file: sources/logs/access.log
+ip_country_file: sources/csv/ip_country.csv
+
+seed:              # how much made-up data to generate: a small business, so the numbers are easy to read
+  random_seed: 42  # (make the numbers bigger to test volume, e.g. orders: 50000 and logins: 50000)
+  companies: 30    # client companies; the first few are also suppliers
+  suppliers: 5
+  products: 60
+  end_customers: 150
+  orders: 1200     # about 85 orders a month
+  logins: 3000     # visits to the website; each visit writes a few log lines
+  months_of_history: 14

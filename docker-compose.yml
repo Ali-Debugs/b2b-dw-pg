@@ -1,0 +1,38 @@
+# Two containers:
+#   postgres  - one PostgreSQL server holding two databases: b2b_source and b2b_warehouse
+#   metabase  - the dashboard tool, open http://localhost:3000
+services:
+  postgres:
+    image: postgres:16
+    container_name: b2b-postgres
+    environment:
+      POSTGRES_USER: b2b
+      POSTGRES_PASSWORD: b2b_local
+      POSTGRES_DB: b2b_source
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # runs once, the first time the container starts: creates the warehouse database
+      - ./sources/postgres/create_databases.sql:/docker-entrypoint-initdb.d/create_databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U b2b -d b2b_source"]
+      interval: 3s
+      retries: 30
+
+  metabase:
+    image: metabase/metabase:v0.63.19
+    container_name: b2b-metabase
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db   # where Metabase keeps its own settings and dashboards
+    ports:
+      - "3000:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  metabase_data:

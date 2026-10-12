@@ -1,0 +1,192 @@
+# B2B data warehouse (simple learning project)
+
+A small ELT pipeline that loads a data warehouse for a B2B e-commerce platform from two sources:
+
+1. the **B2B platform database** (companies, suppliers, end customers, products, catalogs, orders)
+2. the **web server log** (Apache combined format)
+
+Both the source and the warehouse are PostgreSQL databases in one Docker container. Python only moves
+the data in; all cleaning and modelling is plain SQL, one small file per table.
+
+## How to run it
+
+You need Docker and Python 3.11 or newer.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+docker compose up -d              # starts PostgreSQL (port 5432) and Metabase (port 3000)
+
+python -m seed.seed_postgres      # 1. create and fill the B2B source database
+python -m seed.seed_weblogs       # 2. write the web log file
+python run.py                     # 3. load the warehouse
+python -m pytest -q               # 4. check the result
+```
+
+`python -m seed.reset` deletes the source, the warehouse and the log file so you can start again.
+
+The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
+about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The sizes are in
+`config.yaml`; make them bigger to test volume.
+
+## What is in each folder
+
+| Path | What it holds |
+|---|---|
+| `config.yaml` | Connection settings and how much data to generate |
+| `docker-compose.yml` | The PostgreSQL and Metabase containers |
+| `run.py` | The main program: the ordered list of steps and the restart logic |
+| `sources/postgres/` | `schema.sql` (the B2B tables), `connection.py`, `create_databases.sql` |
+| `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
+| `sources/logs/access.log` | The generated web log (not in git) |
+| `seed/` | Scripts that generate the source data and the log |
+| `sql/setup.sql` | Creates the schemas and the three `etl` tables |
+| `sql/raw/` | Empty copies of the source tables, every column as text |
+| `sql/staging/` | Cleaning rules: good rows go on, bad rows go to `etl.rejected_rows` |
+| `sql/dimensions/`, `sql/facts/` | The star schema (schema `dw`) |
+| `sql/marts/` | Report-ready views (schema `mart`) |
+| `dq/` | Data quality checks that must all return 0 |
+| `pipeline/` | Four small Python helpers: copy a table, parse the log, run a SQL file, write the run log |
+| `tests/` | A few simple tests |
+
+One rule makes the project easy to find your way in: **the file name is the step name and the table
+name.** `sql/staging/stg_orders.sql` is step `stg_orders` and builds table `staging.stg_orders`.
+
+## What happens in one run
+
+```
+source database ─┐
+ip_country.csv  ─┼─> raw ──> staging ──> dw (dimensions + facts) ──> data quality checks ──> mart (views)
+access.log      ─┘            │
+                              └──> etl.rejected_rows (bad rows, with the reason)
+```
+
+| Layer | Schema | What it does |
+|---|---|---|
+| Raw | `raw` | Exact copy of each source, all columns text, so nothing can fail to land |
+| Staging | `staging` | Gives every row a `reject_reason`; NULL means good. Good rows get real types |
+| Dimensions | `dw` | `dim_date`, `dim_country`, `dim_company`, `dim_product`, `dim_end_customer`, `dim_device` |
+| Facts | `dw` | `fact_sales` (one row per order item), `fact_logins` (one row per login) |
+| Marts | `mart` | Two wide views for the dashboard and three views that answer the three reports |
+
+Every run reloads everything (`TRUNCATE` then `INSERT`), so running a step twice gives the same result.
+
+## The three reports
+
+| Report | View |
+|---|---|
+| Top 5 most-used devices among B2B clients | `mart.mart_top_devices` |
+| Most popular products in the country with the most logins | `mart.mart_top_products_top_country` |
+| Total sales by month for the last year (the last 12 complete months) | `mart.mart_monthly_sales` |
+
+```bash
+docker exec b2b-postgres psql -U b2b -d b2b_warehouse -c "SELECT * FROM mart.mart_top_devices"
+```
+
+Assumptions behind report 2 (the brief leaves these open):
+
+- The country is the one with the highest number of logins. A login's country comes from its IP address.
+- A sale belongs to the country of the company that placed the order.
+- "Popular" means the highest total quantity sold.
+- The view shows the top 5 products, over all the data that is loaded.
+
+The entity relationship diagrams of the source and the warehouse are in [docs/erd.md](docs/erd.md).
+
+## How each requirement is met
+
+| Requirement | Where to look |
+|---|---|
+| Source database, populated | `sources/postgres/schema.sql`, `seed/seed_postgres.py` |
+| Web log generator | `seed/seed_weblogs.py` |
+| Target store | Database `b2b_warehouse`, star schema in `sql/dimensions/` and `sql/facts/` |
+| Handles large data volumes | Data is moved with `COPY`, streamed in chunks (`pipeline/extractor.py`); the log is read one line at a time (`pipeline/log_parser.py`); all transformations are set-based SQL |
+| Restartable after a failed job or sub-job | Each step is its own transaction and is recorded in `etl.step_log`. After a failure, `python run.py` continues the same run and skips the finished steps (`pipeline/logger.py`, `run.py`) |
+| Initial load | `python run.py` on an empty warehouse creates everything |
+| Handles erroneous data | Staging rules in `sql/staging/`; refused rows are kept in `etl.rejected_rows` with a reason; `dq/` then checks that no row was lost, that no step rejected more than 20% of its rows, and that the star schema is consistent. The reports are only rebuilt when these checks pass |
+| Tracks ETL metadata | `etl.run_log` and `etl.step_log`: start, end, status, row count, error message |
+| Report-friendly format | Star schema plus the `mart` views |
+
+### Try the restart
+
+```bash
+python run.py --fail-at fact_sales   # stops at that step on purpose
+python run.py                        # continues the same run, skipping what is done
+```
+
+Then look at `SELECT * FROM etl.step_log ORDER BY step_log_id`: `fact_sales` appears once as `failed`
+and once as `success`, under the same `run_id`.
+
+### The bad data
+
+The seed scripts put wrong rows in on purpose. After a run, `run.py` prints what was refused and why:
+
+| Bad data | Rule that catches it |
+|---|---|
+| CUIT that is not 11 digits | `stg_companies.sql` |
+| End customer with no document number | `stg_end_customers.sql` |
+| Product with a missing or negative price | `stg_products.sql` |
+| Catalog price of zero | `stg_catalog_items.sql` |
+| Order with a missing or future date | `stg_orders.sql` |
+| Order item with zero quantity or no price | `stg_order_items.sql` |
+| Log line that is cut off | `pipeline/log_parser.py` |
+| Log line with a username that does not exist | `stg_web_logs.sql` |
+
+A row is also refused when the row it depends on was refused (for example the orders of a company with
+a broken CUIT). In every staging step: raw rows = good rows + rejected rows.
+
+## Dashboard (Metabase)
+
+Metabase is a ready-made dashboard tool, so there is no dashboard code in this project. You build the
+dashboard once by clicking. Menu names can differ a little between Metabase versions.
+
+**1. Connect (once)**
+
+1. Open http://localhost:3000 (the first start takes about a minute) and create your admin user.
+2. Add the database: type **PostgreSQL**, host `postgres`, port `5432`, database name `b2b_warehouse`,
+   username `b2b`, password `b2b_local`. The host is `postgres` (the container name), not `localhost`.
+
+**2. Make the four charts** (New -> Question, pick the table, then Summarize)
+
+| Chart | Table | Summarize | Group by | Finish |
+|---|---|---|---|---|
+| Top 5 devices | Mart Logins | Count | Device | Sort by count descending, row limit 5, bar chart |
+| Logins by country | Mart Logins | Count | Country | Bar chart |
+| Top 10 products | Mart Sales | Sum of Quantity | Product Name | Sort descending, row limit 10, bar chart |
+| Sales by month | Mart Sales | Sum of Amount | Order Date: Month | Line or bar chart |
+
+Also save three plain questions that just show the tables **Mart Top Devices**,
+**Mart Top Products Top Country** and **Mart Monthly Sales**: these are the fixed answers to the three
+reports and do not change with the filters.
+
+**3. Make the dashboard and add the filters** (New -> Dashboard, add the saved questions, then Edit ->
+Add a filter)
+
+| Filter | Type | Connect it to |
+|---|---|---|
+| Date range | Date picker | `Login Date` on the login charts, `Order Date` on the sales charts |
+| Country | Text or Category | `Country` on all four charts |
+| Company | Text or Category | `Company Name` on all four charts |
+| Device | Text or Category | `Device` on the login charts |
+| Product | Text or Category | `Product Name` on the sales charts |
+| Supplier | Text or Category | `Supplier Name` on the sales charts |
+
+Every time you change a filter, Metabase runs a new query against the `mart` views.
+
+## Kept simple on purpose
+
+- **Full reload only.** Every run rebuilds every table. There is no incremental load and no history of
+  changes (no slowly changing dimensions).
+- **Source ids are the keys** of the dimensions. That is safe here because no history is kept.
+- **A "login" is one visit of a logged-in user.** The request line is out of scope in the brief, so a
+  login page cannot be recognised. Instead, the log lines of one user are grouped: a line starts a new
+  login when the user's line before it is more than 30 minutes older (`sql/facts/fact_logins.sql`).
+- **IP -> country uses a small made-up lookup file** on the first number of the address. A real project
+  would use a GeoIP database.
+- **Device comes from a few `LIKE` rules** on the user agent text (`stg_web_logs.sql`).
+- **`suppliers` and `catalog_items` are loaded** into `raw` and `staging` (suppliers also show up as
+  `dim_company.is_supplier` and `dim_product.supplier_name`). The three reports do not need them, so
+  `catalog_items` has no fact table.
+- **Two fact tables.** `fact_sales` has one row per order item, the finest level in the source.
+  `fact_logins` has one row per login (visit); the single log lines stay in `staging.stg_web_logs`.
+- **Passwords are in `config.yaml`.** They are local defaults for the Docker container only.
