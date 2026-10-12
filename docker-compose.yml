@@ -1,5 +1,5 @@
 # Two containers:
-#   postgres  - one PostgreSQL server holding two databases: b2b_source and b2b_warehouse
+#   postgres  - one PostgreSQL server holding the source database and the two warehouses (dev and prod)
 #   metabase  - the dashboard tool, open http://localhost:3000
 services:
   postgres:

@@ -70,7 +70,7 @@ erDiagram
     }
 ```
 
-## Warehouse: star schema (database `b2b_warehouse`, schema `dw`)
+## Warehouse: star schema (databases `b2b_warehouse_dev` and `b2b_warehouse_prod`, schema `dw`)
 
 Defined in `sql/dimensions/` and `sql/facts/`. Two fact tables in the middle, six dimensions around them.
 
