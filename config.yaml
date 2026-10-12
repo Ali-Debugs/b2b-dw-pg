@@ -7,14 +7,23 @@ source:            # the B2B platform database (OLTP)
   user: b2b
   password: b2b_local
 
-warehouse:         # the data warehouse
+# Two warehouses. Which one is used is decided by the environment variable B2B_ENV (dev or prod).
+warehouse_dev:     # DEV: where changes are tried and tested first (the default)
   host: localhost
   port: 5432
-  dbname: b2b_warehouse
+  dbname: b2b_warehouse_dev
   user: b2b
   password: b2b_local
 
-log_file: sources/logs/access.log
+warehouse_prod:    # PROD: the live warehouse that the Metabase dashboard reads
+  host: localhost
+  port: 5432
+  dbname: b2b_warehouse_prod
+  user: b2b
+  password: b2b_local
+
+# The web server log. It is outside the project folder, like the log of a real web server.
+log_file: ~/b2b_weblogs/access.log
 ip_country_file: sources/csv/ip_country.csv
 
 seed:              # how much made-up data to generate: a small business, so the numbers are easy to read

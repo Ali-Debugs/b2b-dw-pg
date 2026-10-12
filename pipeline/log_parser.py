@@ -6,7 +6,7 @@ Only four things are kept from each line: client IP, username, timestamp and use
 import re
 from datetime import datetime
 
-from sources.postgres.connection import CONFIG, ROOT
+from sources.postgres.connection import LOG_FILE
 
 # Apache combined format:  IP ident USER [TIME] "REQUEST" STATUS BYTES "REFERER" "USER-AGENT"
 # The four (...) groups are the parts we keep.
@@ -35,7 +35,7 @@ def load_log_file(warehouse, step_name):
     cur.execute("DELETE FROM etl.rejected_rows WHERE step_name = %s", [step_name])
 
     broken_lines = []
-    with open(ROOT / CONFIG["log_file"], errors="replace") as log_file:
+    with open(LOG_FILE, errors="replace") as log_file:
         with cur.copy(f"COPY raw.{step_name} FROM STDIN") as copy_in:
             for line in log_file:
                 parsed = parse_line(line)

@@ -16,7 +16,7 @@ import csv
 import random
 from datetime import datetime, timedelta
 
-from sources.postgres.connection import CONFIG, ROOT, connect_source
+from sources.postgres.connection import CONFIG, LOG_FILE, ROOT, connect_source
 
 SIZES = CONFIG["seed"]
 random.seed(SIZES["random_seed"])
@@ -79,15 +79,14 @@ def main():
 
     # A real log is written in time order.
     lines.sort()
-    log_path = ROOT / CONFIG["log_file"]
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as log_file:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG_FILE, "w") as log_file:
         for line_number, (_, line) in enumerate(lines, start=1):
             if line_number % 100 == 0:
                 line = line[:40]  # bad data: the line is cut off
             log_file.write(line + "\n")
 
-    print(f"Wrote {len(lines)} lines ({SIZES['logins']} visits) to {CONFIG['log_file']}")
+    print(f"Wrote {len(lines)} lines ({SIZES['logins']} visits) to {LOG_FILE}")
 
 
 if __name__ == "__main__":

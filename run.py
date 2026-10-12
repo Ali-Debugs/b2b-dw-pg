@@ -1,6 +1,7 @@
 """The main program: loads the warehouse, one step after the other.
 
     python run.py                         run the pipeline (or continue the run that failed)
+    B2B_ENV=prod python run.py            the same, but load the PROD warehouse instead of DEV
     python run.py --fail-at fact_sales    stop on purpose at that step, to show the restart
 
 Each step is one .sql file. The step name is the file name without ".sql", and it is also the
@@ -13,7 +14,7 @@ import time
 from pathlib import Path
 
 from pipeline import executor, extractor, log_parser, logger
-from sources.postgres.connection import connect_warehouse
+from sources.postgres.connection import ENV, connect_warehouse
 
 # The steps, in the order they run: (the SQL file, extra Python work to do after it).
 STEPS = [
@@ -95,6 +96,7 @@ def main():
 
     executor.run_sql_file(log, "sql/setup.sql")
     run_id, steps_done = logger.start_run(log)
+    print(f"Environment: {ENV}")
     print(f"Run {run_id}" + (f" (continuing, {len(steps_done)} steps already done)" if steps_done else ""))
 
     for sql_file, extra_work in STEPS:

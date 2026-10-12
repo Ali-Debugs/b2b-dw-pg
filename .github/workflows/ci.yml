@@ -1,0 +1,58 @@
+# CI = continuous integration.
+# On every push to the dev branch, and on every pull request to main, GitHub starts a fresh
+# machine, builds the whole project from zero on a DEV warehouse and runs the tests.
+# It uses its own throw-away PostgreSQL, so it never touches the databases on your computer.
+name: CI - test on dev
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: b2b
+          POSTGRES_PASSWORD: b2b_local
+          POSTGRES_DB: b2b_source
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U b2b -d b2b_source"
+          --health-interval 5s
+          --health-retries 20
+
+    env:
+      B2B_ENV: dev
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the Python packages
+        run: pip install -r requirements.txt
+
+      - name: Create the warehouse databases
+        run: psql -h localhost -U b2b -d b2b_source -f sources/postgres/create_databases.sql
+        env:
+          PGPASSWORD: b2b_local
+
+      - name: Generate the source data and the web log
+        run: |
+          python -m seed.seed_postgres
+          python -m seed.seed_weblogs
+
+      - name: Load the DEV warehouse
+        run: python run.py
+
+      - name: Run the tests
+        run: python -m pytest -q

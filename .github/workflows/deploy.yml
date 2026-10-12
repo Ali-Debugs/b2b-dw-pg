@@ -1,0 +1,31 @@
+# CD = continuous deployment.
+# When a pull request is merged into main, this loads the PROD warehouse with the new code.
+# It runs on the "self-hosted runner" on your own computer, because that is where the PROD
+# database lives. Docker must be running there.
+name: CD - deploy to prod
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # also allows starting it by hand from the Actions page
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    env:
+      B2B_ENV: prod
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the Python packages
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -q -r requirements.txt
+
+      - name: Load the PROD warehouse
+        run: .venv/bin/python run.py
+
+      - name: Check the PROD warehouse
+        run: .venv/bin/python -m pytest -q

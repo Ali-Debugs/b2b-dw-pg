@@ -1,5 +1,6 @@
 """Opens connections to the two databases. Every other file gets its connections from here."""
 
+import os
 from pathlib import Path
 
 import psycopg
@@ -7,6 +8,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]  # the project folder
 CONFIG = yaml.safe_load((ROOT / "config.yaml").read_text())
+LOG_FILE = Path(CONFIG["log_file"]).expanduser()  # the web server log
+
+# Which warehouse to use: "dev" (the default) or "prod".  Example:  B2B_ENV=prod python run.py
+ENV = os.environ.get("B2B_ENV", "dev")
 
 
 def connect_source():
@@ -15,5 +20,5 @@ def connect_source():
 
 
 def connect_warehouse():
-    """The data warehouse (where the pipeline loads the data)."""
-    return psycopg.connect(**CONFIG["warehouse"])
+    """The data warehouse of the current environment (dev or prod)."""
+    return psycopg.connect(**CONFIG[f"warehouse_{ENV}"])

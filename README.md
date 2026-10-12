@@ -20,7 +20,7 @@ docker compose up -d              # starts PostgreSQL (port 5432) and Metabase (
 
 python -m seed.seed_postgres      # 1. create and fill the B2B source database
 python -m seed.seed_weblogs       # 2. write the web log file
-python run.py                     # 3. load the warehouse
+python run.py                     # 3. load the DEV warehouse
 python -m pytest -q               # 4. check the result
 ```
 
@@ -39,7 +39,8 @@ about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The 
 | `run.py` | The main program: the ordered list of steps and the restart logic |
 | `sources/postgres/` | `schema.sql` (the B2B tables), `connection.py`, `create_databases.sql` |
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
-| `sources/logs/access.log` | The generated web log (not in git) |
+| `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
+| `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
 | `seed/` | Scripts that generate the source data and the log |
 | `sql/setup.sql` | Creates the schemas and the three `etl` tables |
 | `sql/raw/` | Empty copies of the source tables, every column as text |
@@ -81,7 +82,7 @@ Every run reloads everything (`TRUNCATE` then `INSERT`), so running a step twice
 | Total sales by month for the last year (the last 12 complete months) | `mart.mart_monthly_sales` |
 
 ```bash
-docker exec b2b-postgres psql -U b2b -d b2b_warehouse -c "SELECT * FROM mart.mart_top_devices"
+docker exec b2b-postgres psql -U b2b -d b2b_warehouse_dev -c "SELECT * FROM mart.mart_top_devices"
 ```
 
 Assumptions behind report 2 (the brief leaves these open):
@@ -97,9 +98,10 @@ The entity relationship diagrams of the source and the warehouse are in [docs/er
 
 | Requirement | Where to look |
 |---|---|
+| Project infrastructure | Docker Compose, dev and prod warehouses, CI and CD in `.github/workflows/` |
 | Source database, populated | `sources/postgres/schema.sql`, `seed/seed_postgres.py` |
 | Web log generator | `seed/seed_weblogs.py` |
-| Target store | Database `b2b_warehouse`, star schema in `sql/dimensions/` and `sql/facts/` |
+| Target store | Databases `b2b_warehouse_dev` and `b2b_warehouse_prod`, star schema in `sql/dimensions/` and `sql/facts/` |
 | Handles large data volumes | Data is moved with `COPY`, streamed in chunks (`pipeline/extractor.py`); the log is read one line at a time (`pipeline/log_parser.py`); all transformations are set-based SQL |
 | Restartable after a failed job or sub-job | Each step is its own transaction and is recorded in `etl.step_log`. After a failure, `python run.py` continues the same run and skips the finished steps (`pipeline/logger.py`, `run.py`) |
 | Initial load | `python run.py` on an empty warehouse creates everything |
@@ -135,6 +137,38 @@ The seed scripts put wrong rows in on purpose. After a run, `run.py` prints what
 A row is also refused when the row it depends on was refused (for example the orders of a company with
 a broken CUIT). In every staging step: raw rows = good rows + rejected rows.
 
+## Dev, prod and CI/CD
+
+There are two warehouses in the same PostgreSQL server, and two git branches.
+
+| | DEV | PROD |
+|---|---|---|
+| Purpose | Try and test changes | The live warehouse behind the Metabase dashboard |
+| Database | `b2b_warehouse_dev` | `b2b_warehouse_prod` |
+| Git branch | `dev` | `main` |
+| Loaded by | you, with `python run.py` | GitHub, after a merge to `main` |
+
+The environment variable `B2B_ENV` chooses the warehouse (`sources/postgres/connection.py`). Without it
+you are always on dev, so you cannot load prod by accident. `B2B_ENV=prod python run.py` loads prod by
+hand. Both warehouses read the same source database and web log.
+
+**The workflow, step by step**
+
+1. Work on the `dev` branch. Run `python run.py` and `python -m pytest -q` on your computer.
+2. `git push`. **CI** (`.github/workflows/ci.yml`) starts on GitHub: a fresh machine with its own
+   empty PostgreSQL creates the databases, generates the data, loads the dev warehouse and runs the
+   tests. A green tick means the project builds from zero.
+3. Open a pull request from `dev` to `main`. CI runs again and its result is shown on the pull request.
+4. Merge the pull request. This is the release decision.
+5. **CD** (`.github/workflows/deploy.yml`) starts: it loads the prod warehouse with the new code and
+   runs the tests against prod. Metabase now shows the result.
+
+**Why the deploy runs on your own computer.** The prod database is in Docker on your machine, and
+GitHub's servers cannot reach it. So the deploy job runs on a *self-hosted runner*: a small GitHub
+program on your computer that waits for jobs. Set it up once on GitHub under
+Settings -> Actions -> Runners -> New self-hosted runner (choose macOS), and start it with `./run.sh`.
+Docker and the runner must be running for a deploy to happen; otherwise the job waits.
+
 ## Dashboard (Metabase)
 
 Metabase is a ready-made dashboard tool, so there is no dashboard code in this project. You build the
@@ -143,7 +177,8 @@ dashboard once by clicking. Menu names can differ a little between Metabase vers
 **1. Connect (once)**
 
 1. Open http://localhost:3000 (the first start takes about a minute) and create your admin user.
-2. Add the database: type **PostgreSQL**, host `postgres`, port `5432`, database name `b2b_warehouse`,
+2. Add the database: type **PostgreSQL**, host `postgres`, port `5432`, database name `b2b_warehouse_prod`
+   (the dashboard shows the live data),
    username `b2b`, password `b2b_local`. The host is `postgres` (the container name), not `localhost`.
 
 **2. Make the four charts** (New -> Question, pick the table, then Summarize)
