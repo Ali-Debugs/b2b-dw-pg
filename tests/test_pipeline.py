@@ -87,6 +87,22 @@ def test_a_visit_of_many_log_lines_counts_as_one_login():
     assert too_close == 0
 
 
+def test_every_company_has_one_current_version_and_no_overlapping_versions():
+    not_one_current = query("""
+        SELECT count(*) FROM (
+          SELECT company_id FROM dw.dim_company GROUP BY company_id
+          HAVING count(*) FILTER (WHERE is_current) <> 1) AS wrong
+    """)[0][0]
+    assert not_one_current == 0
+    # two versions of the same company must never be valid on the same day
+    overlapping = query("""
+        SELECT count(*) FROM dw.dim_company a
+        JOIN dw.dim_company b ON b.company_id = a.company_id AND b.company_key > a.company_key
+        WHERE a.valid_from < b.valid_to AND b.valid_from < a.valid_to
+    """)[0][0]
+    assert overlapping == 0
+
+
 def test_every_data_quality_check_finds_zero_bad_rows():
     dq_files = [
         "dq/no_row_lost.sql",

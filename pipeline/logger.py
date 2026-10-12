@@ -8,11 +8,11 @@ stays saved even when the step it describes fails and is rolled back.
 def start_run(log):
     """Return (run_id, steps_already_done).
 
-    If the last run did not finish with success, continue that run: same run_id, and the steps that
+    If the last run failed (or was interrupted), continue that run: same run_id, and the steps that
     already succeeded are skipped. Otherwise start a new run.
     """
     last = log.execute("SELECT run_id, status FROM etl.run_log ORDER BY run_id DESC LIMIT 1").fetchone()
-    if last and last[1] != "success":
+    if last and last[1] in ("failed", "running"):
         run_id = last[0]
         log.execute("UPDATE etl.run_log SET status = 'running', finished_at = NULL WHERE run_id = %s", [run_id])
         done = log.execute(
