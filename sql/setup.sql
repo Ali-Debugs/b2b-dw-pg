@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS etl.step_log (
   started_at    timestamptz NOT NULL DEFAULT now(),
   finished_at   timestamptz,
   status        text NOT NULL,              -- running / success / failed
-  row_count     bigint,                     -- rows in the table the step built
+  row_count     bigint,                     -- rows in the table the step built (for a quality step: the number of checks)
   error_message text
 );
 

@@ -30,7 +30,7 @@ erDiagram
         text country_code
     }
     suppliers {
-        int company_id PK
+        int company_id PK, FK
         date supplier_since
     }
     end_customers {
@@ -47,8 +47,8 @@ erDiagram
         numeric default_price
     }
     catalog_items {
-        int company_id PK
-        int product_id PK
+        int company_id PK, FK
+        int product_id PK, FK
         numeric price
     }
     orders {
@@ -58,7 +58,7 @@ erDiagram
         timestamp order_date
     }
     order_items {
-        int order_id PK
+        int order_id PK, FK
         int line_number PK
         int product_id FK
         int quantity
@@ -125,7 +125,7 @@ erDiagram
     }
     dim_device {
         int device_key PK
-        text device_name
+        text device_name UK
     }
     fact_sales {
         int order_id PK

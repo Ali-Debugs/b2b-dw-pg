@@ -25,6 +25,8 @@ python -m pytest -q               # 4. check the result
 ```
 
 `python -m seed.reset` deletes the source, the warehouse and the log file so you can start again.
+`./rebuild_everything.sh` does the whole thing in one go: it wipes the sources and both warehouses,
+generates the data again, then loads and tests dev and prod. It asks for confirmation first.
 
 The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
 about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The sizes are in
