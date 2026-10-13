@@ -67,6 +67,16 @@ STEPS = [
 # Which warehouse schema the files of each folder build their table in.
 SCHEMA_OF_FOLDER = {"raw": "raw", "staging": "staging", "dimensions": "dw", "facts": "dw", "marts": "mart"}
 
+# The name of each layer as it is printed on the screen.
+HEADING_OF_FOLDER = {
+    "raw": "RAW",
+    "staging": "STAGING",
+    "dimensions": "DIMENSIONS",
+    "facts": "FACTS",
+    "dq": "CHECKS",
+    "marts": "MARTS",
+}
+
 # --- Incremental load ---
 # The three raw tables that keep growing. A full run empties and reloads them like every other table.
 # An incremental run (python run.py --incremental) keeps their rows and only adds the new ones, using
@@ -79,15 +89,16 @@ INCREMENTAL_WORK = {
 
 
 def run_step(warehouse, sql_file, extra_work, incremental=False):
-    """Do the work of one step. Returns the number of rows in the table it built (None for a check)."""
+    """Do the work of one step. Returns the number of rows in the table it built (for a check: how many checks)."""
     step_name = Path(sql_file).stem
     folder = Path(sql_file).parent.name
 
     if folder == "dq":
-        failed = [name for name, bad_rows in executor.query_sql_file(warehouse, sql_file) if bad_rows > 0]
+        checks = executor.query_sql_file(warehouse, sql_file)
+        failed = [name for name, bad_rows in checks if bad_rows > 0]
         if failed:
             raise RuntimeError("data quality checks failed: " + "; ".join(failed))
-        return None
+        return len(checks)  # for a quality step, the number of checks (it is saved as the row count)
 
     if incremental and step_name in INCREMENTAL_WORK:
         INCREMENTAL_WORK[step_name](warehouse, step_name)  # --- Incremental load: add only the new rows
@@ -99,6 +110,18 @@ def run_step(warehouse, sql_file, extra_work, incremental=False):
         watermark.save(warehouse, step_name)  # --- Incremental load: remember how far this table is loaded
     table = f"{SCHEMA_OF_FOLDER[folder]}.{step_name}"
     return warehouse.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
+
+def print_layer(folder, ran, skipped, seconds, checks):
+    """Print one line for a layer of the pipeline, after its last step."""
+    heading = f"  {HEADING_OF_FOLDER[folder]:<11}"
+    if ran == 0:
+        print(f"{heading}{skipped:>2} steps   skipped")
+    elif folder == "dq":
+        print(f"{heading}{checks:>2} passed")
+    else:
+        also = f"  ({skipped} skipped)" if skipped else ""
+        print(f"{heading}{ran:>2} steps   {seconds:.1f}s{also}")
 
 
 def main():
@@ -114,23 +137,41 @@ def main():
     executor.run_sql_file(log, "sql/setup.sql")
     executor.run_migrations(warehouse)
     run_id, steps_done = logger.start_run(log)
-    print(f"Environment: {ENV}")
-    print(f"Run {run_id}" + (f" (continuing, {len(steps_done)} steps already done)" if steps_done else ""))
 
     # --- Incremental load ---
     # An incremental run needs watermarks, and those are first written by a full run.
     incremental = args.incremental
-    if incremental and not watermark.all_saved(log):
-        print("No watermarks yet, so this run is a full load.")
+    no_watermarks = incremental and not watermark.all_saved(log)
+    if no_watermarks:
         incremental = False
     load_type = "incremental" if incremental else "full"
     log.execute("UPDATE etl.run_log SET load_type = %s WHERE run_id = %s", [load_type, run_id])
-    print(f"Load type: {load_type}")
+
+    continuing = f" (continuing, {len(steps_done)} steps already done)" if steps_done else ""
+    print(f"Run {run_id} on {ENV}: {load_type} load{continuing}")
+    if no_watermarks:
+        print("  (no watermarks yet, so this run is a full load)")
+    print()
+
+    run_started = time.time()
+    steps_run = steps_skipped = 0
+    layer = None  # the layer (folder) being run, and what it has done so far
+    ran = skipped = checks = 0
+    seconds = 0.0
 
     for sql_file, extra_work in STEPS:
         step_name = Path(sql_file).stem
+        folder = Path(sql_file).parent.name
+        if folder != layer:  # a new layer starts: first print the line of the one before
+            if layer:
+                print_layer(layer, ran, skipped, seconds, checks)
+            layer = folder
+            ran = skipped = checks = 0
+            seconds = 0.0
+
         if step_name in steps_done:
-            print(f"  {step_name:32} skipped (already done)")
+            skipped += 1
+            steps_skipped += 1
             continue
 
         step_log_id = logger.start_step(log, run_id, step_name)
@@ -144,23 +185,34 @@ def main():
             warehouse.rollback()  # undo what the step did
             logger.end_step(log, step_log_id, "failed", error_message=str(error))
             logger.end_run(log, run_id, "failed")
-            print(f"  {step_name:32} FAILED: {error}")
-            print("Fix the problem and run again: finished steps are skipped.")
+            print(f"  {HEADING_OF_FOLDER[folder]:<11}FAILED at {step_name}: {error}")
+            print("\nFix the problem and run again: finished steps are skipped.")
             sys.exit(1)
 
         logger.end_step(log, step_log_id, "success", row_count)
-        rows = "" if row_count is None else f"{row_count:>9,} rows"
-        print(f"  {step_name:32} ok {rows}  ({time.time() - started:.1f}s)")
+        ran += 1
+        steps_run += 1
+        seconds += time.time() - started
+        if folder == "dq":
+            checks += row_count
+    print_layer(layer, ran, skipped, seconds, checks)  # the line of the last layer
 
     logger.end_run(log, run_id, "success")
-    print(f"Run {run_id} finished.")
-
-    print("Rejected rows (see etl.rejected_rows):")
     rejected = log.execute(
-        "SELECT step_name, reason, count(*) FROM etl.rejected_rows GROUP BY step_name, reason ORDER BY step_name, reason"
+        "SELECT step_name, count(*) FROM etl.rejected_rows GROUP BY step_name ORDER BY 2 DESC, 1"
+    ).fetchall()
+    total_rejected = sum(count for _, count in rejected)
+    skipped_note = f" ({steps_skipped} skipped)" if steps_skipped else ""
+    print(
+        f"\nRun {run_id} finished: {steps_run} steps{skipped_note} in {time.time() - run_started:.1f}s, "
+        f"{total_rejected:,} rows rejected"
     )
-    for step_name, reason, count in rejected:
-        print(f"  {step_name:20} {reason:40} {count:>7,}")
+    for step_name, count in rejected[:5]:  # the five steps that rejected the most
+        print(f"  {step_name:20} {count:>7,}")
+    if len(rejected) > 5:
+        print(f"  {'other steps':20} {sum(count for _, count in rejected[5:]):>7,}")
+    if rejected:
+        print("Reasons: SELECT step_name, reason, count(*) FROM etl.rejected_rows GROUP BY 1, 2")
 
 
 if __name__ == "__main__":
