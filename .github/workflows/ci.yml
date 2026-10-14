@@ -51,7 +51,19 @@ jobs:
           python -m seed.seed_postgres
           python -m seed.seed_weblogs
 
-      - name: Load the DEV warehouse
+      # A deploy to prod is an upgrade, not a new build: the warehouse already exists, built by the
+      # previous release. So build it with main first, then run the new code on top of it.
+      # The folder starts with a dot so that pytest does not look inside it.
+      - name: Get the previous release (main)
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: .previous
+
+      - name: Load the DEV warehouse with the previous release
+        run: cd .previous && python run.py
+
+      - name: Load the DEV warehouse with the new code (the upgrade)
         run: python run.py
 
       - name: Run the tests

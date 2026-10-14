@@ -5,20 +5,24 @@ stays saved even when the step it describes fails and is rolled back.
 """
 
 
-def start_run(log):
+def start_run(log, fresh=False):
     """Return (run_id, steps_already_done).
 
     If the last run failed (or was interrupted), continue that run: same run_id, and the steps that
-    already succeeded are skipped. Otherwise start a new run.
+    already succeeded are skipped. With fresh=True the failed run is given up ('abandoned') and a new
+    run starts from step 1, so everything is read and built again. Otherwise start a new run.
     """
     last = log.execute("SELECT run_id, status FROM etl.run_log ORDER BY run_id DESC LIMIT 1").fetchone()
     if last and last[1] in ("failed", "running"):
-        run_id = last[0]
-        log.execute("UPDATE etl.run_log SET status = 'running', finished_at = NULL WHERE run_id = %s", [run_id])
-        done = log.execute(
-            "SELECT step_name FROM etl.step_log WHERE run_id = %s AND status = 'success'", [run_id]
-        ).fetchall()
-        return run_id, {row[0] for row in done}
+        if fresh:
+            log.execute("UPDATE etl.run_log SET status = 'abandoned' WHERE run_id = %s", [last[0]])
+        else:
+            run_id = last[0]
+            log.execute("UPDATE etl.run_log SET status = 'running', finished_at = NULL WHERE run_id = %s", [run_id])
+            done = log.execute(
+                "SELECT step_name FROM etl.step_log WHERE run_id = %s AND status = 'success'", [run_id]
+            ).fetchall()
+            return run_id, {row[0] for row in done}
 
     run_id = log.execute("INSERT INTO etl.run_log (status) VALUES ('running') RETURNING run_id").fetchone()[0]
     return run_id, set()

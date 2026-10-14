@@ -24,8 +24,9 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install -q -r requirements.txt
 
+      # --fresh: never continue an old failed deploy, which would skip steps with the old code
       - name: Load the PROD warehouse
-        run: .venv/bin/python run.py
+        run: .venv/bin/python run.py --fresh
 
       - name: Check the PROD warehouse
         run: .venv/bin/python -m pytest -q

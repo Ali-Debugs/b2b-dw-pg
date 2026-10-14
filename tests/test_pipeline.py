@@ -4,9 +4,16 @@
     python -m pytest -q
 """
 
+import pytest
+
 from pipeline import executor
 from pipeline.log_parser import parse_line
-from sources.postgres.connection import connect_warehouse
+from sources.postgres.connection import ENV, connect_warehouse
+
+# Most tests below are true for any data, so they also run against PROD after a deploy.
+# A few only make sense for the made-up data (they count on its bad rows and its size): they are
+# marked with this and skipped on PROD, so real, cleaner data cannot fail a deploy.
+made_up_data_only = pytest.mark.skipif(ENV == "prod", reason="needs the made-up data")
 
 GOOD_LINE = (
     '181.20.3.44 - user0007 [10/Oct/2025:13:55:36 -0300] "GET /catalog HTTP/1.1" 200 5123 "-" '
@@ -46,21 +53,40 @@ def test_last_run_finished_with_success():
     assert query("SELECT status FROM etl.run_log ORDER BY run_id DESC LIMIT 1") == [("success",)]
 
 
-def test_report_1_has_five_devices_biggest_first():
+def test_report_1_has_at_most_five_devices_biggest_first():
     logins = [row[1] for row in query("SELECT device, logins FROM mart.mart_top_devices")]
-    assert len(logins) == 5
+    assert len(logins) <= 5
     assert logins == sorted(logins, reverse=True)
 
 
-def test_report_2_has_five_products_of_one_country_biggest_first():
+@made_up_data_only
+def test_report_1_has_exactly_five_devices():
+    assert len(query("SELECT device FROM mart.mart_top_devices")) == 5
+
+
+def test_report_2_has_at_most_five_products_of_one_country_biggest_first():
     rows = query("SELECT country, total_quantity FROM mart.mart_top_products_top_country")
-    assert len(rows) == 5
-    assert len({row[0] for row in rows}) == 1
+    assert len(rows) <= 5
+    assert len({row[0] for row in rows}) <= 1
     quantities = [row[1] for row in rows]
     assert quantities == sorted(quantities, reverse=True)
 
 
-def test_report_3_has_twelve_months():
+@made_up_data_only
+def test_report_2_has_exactly_five_products():
+    assert len(query("SELECT product_name FROM mart.mart_top_products_top_country")) == 5
+
+
+def test_report_3_has_at_most_twelve_complete_months_in_order():
+    months = [row[0] for row in query("SELECT month FROM mart.mart_monthly_sales")]
+    assert len(months) <= 12
+    assert months == sorted(months)
+    # the current month is not finished yet, so it is left out
+    assert query("SELECT count(*) FROM mart.mart_monthly_sales WHERE month >= date_trunc('month', current_date)")[0][0] == 0
+
+
+@made_up_data_only
+def test_report_3_has_exactly_twelve_months():
     assert len(query("SELECT month FROM mart.mart_monthly_sales")) == 12
 
 
@@ -70,14 +96,21 @@ def test_no_row_is_lost_between_raw_and_staging():
     good = query("SELECT count(*) FROM staging.stg_orders")[0][0]
     rejected = query("SELECT count(*) FROM etl.rejected_rows WHERE step_name = 'stg_orders'")[0][0]
     assert raw == good + rejected
-    assert rejected > 0
 
 
+@made_up_data_only
+def test_the_bad_orders_of_the_made_up_data_are_rejected():
+    assert query("SELECT count(*) FROM etl.rejected_rows WHERE step_name = 'stg_orders'")[0][0] > 0
+
+
+@made_up_data_only
 def test_a_visit_of_many_log_lines_counts_as_one_login():
     log_lines = query("SELECT count(*) FROM staging.stg_web_logs")[0][0]
     logins = query("SELECT count(*) FROM dw.fact_logins")[0][0]
     assert 0 < logins < log_lines
-    # the same user never has two logins less than 30 minutes apart
+
+
+def test_the_same_user_never_has_two_logins_less_than_30_minutes_apart():
     too_close = query("""
         SELECT count(*) FROM (
           SELECT login_time - lag(login_time) OVER (PARTITION BY username ORDER BY login_time) AS gap
@@ -101,6 +134,18 @@ def test_every_company_has_one_current_version_and_no_overlapping_versions():
         WHERE a.valid_from < b.valid_to AND b.valid_from < a.valid_to
     """)[0][0]
     assert overlapping == 0
+
+
+def test_every_sale_and_login_points_to_the_company_version_of_its_day():
+    # this is what keeps the history: an old sale stays with the name the company had then
+    for fact in ["fact_sales", "fact_logins"]:
+        wrong = query(f"""
+            SELECT count(*) FROM dw.{fact} f
+            JOIN dw.dim_company c ON c.company_key = f.company_key
+            JOIN dw.dim_date d    ON d.date_key = f.date_key
+            WHERE d.full_date < c.valid_from OR d.full_date >= c.valid_to
+        """)[0][0]
+        assert wrong == 0, fact
 
 
 def test_every_data_quality_check_finds_zero_bad_rows():

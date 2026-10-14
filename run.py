@@ -3,6 +3,7 @@
     python run.py                         run the pipeline (or continue the run that failed)
     B2B_ENV=prod python run.py            the same, but load the PROD warehouse instead of DEV
     python run.py --fail-at fact_sales    stop on purpose at that step, to show the restart
+    python run.py --fresh                 give up a failed run and start again from step 1
     python run.py --incremental           fetch only the new orders and log lines (see the bottom block)
 
 Each step is one .sql file. The step name is the file name without ".sql", and it is also the
@@ -128,6 +129,7 @@ def main():
     parser = argparse.ArgumentParser(description="Load the B2B data warehouse")
     parser.add_argument("--fail-at", metavar="STEP", help="fail on purpose at this step (to demo the restart)")
     parser.add_argument("--incremental", action="store_true", help="fetch only new orders and log lines")
+    parser.add_argument("--fresh", action="store_true", help="do not continue a failed run: start again from step 1")
     args = parser.parse_args()
 
     warehouse = connect_warehouse()  # does the work: one transaction per step
@@ -136,7 +138,7 @@ def main():
 
     executor.run_sql_file(log, "sql/setup.sql")
     executor.run_migrations(warehouse)
-    run_id, steps_done = logger.start_run(log)
+    run_id, steps_done = logger.start_run(log, args.fresh)
 
     # --- Incremental load ---
     # An incremental run needs watermarks, and those are first written by a full run.
@@ -147,7 +149,7 @@ def main():
     load_type = "incremental" if incremental else "full"
     log.execute("UPDATE etl.run_log SET load_type = %s WHERE run_id = %s", [load_type, run_id])
 
-    continuing = f" (continuing, {len(steps_done)} steps already done)" if steps_done else ""
+    continuing = f" (continuing, {len(steps_done)} steps already done; --fresh starts over)" if steps_done else ""
     print(f"Run {run_id} on {ENV}: {load_type} load{continuing}")
     if no_watermarks:
         print("  (no watermarks yet, so this run is a full load)")

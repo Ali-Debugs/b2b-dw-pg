@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS etl.run_log (
   run_id      serial PRIMARY KEY,
   started_at  timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz,
-  status      text NOT NULL                 -- running / success / failed
+  status      text NOT NULL                 -- running / success / failed / abandoned
 );
 
 -- One row per step per attempt. A restart reads this to know which steps are already done.
