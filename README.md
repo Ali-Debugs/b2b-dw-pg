@@ -53,7 +53,7 @@ time zone, which is also set in `config.yaml` (`timezone`), not in the time zone
 | `sql/marts/` | Report-ready views (schema `mart`) |
 | `dq/` | Data quality checks that must all return 0 |
 | `pipeline/` | Small Python helpers: copy a table, parse the log, run a SQL file, write the run log, keep the watermarks |
-| `tests/` | A few simple tests |
+| `tests/` | A few simple tests. Most are true for any data. The ones that count on the made-up data (its bad rows and its size) are marked `made_up_data_only` and are skipped on prod, so cleaner real data cannot fail a deploy |
 
 One rule makes the project easy to find your way in: **the file name is the step name and the table
 name.** `sql/staging/stg_orders.sql` is step `stg_orders` and builds table `staging.stg_orders`.
@@ -108,7 +108,7 @@ The entity relationship diagrams of the source and the warehouse are in [docs/er
 | Web log generator | `seed/seed_weblogs.py` |
 | Target store | Databases `b2b_warehouse_dev` and `b2b_warehouse_prod`, star schema in `sql/dimensions/` and `sql/facts/` |
 | Handles large data volumes | Data is moved with `COPY`, streamed in chunks (`pipeline/extractor.py`); the log is read one line at a time (`pipeline/log_parser.py`); all transformations are set-based SQL |
-| Restartable after a failed job or sub-job | Each step is its own transaction and is recorded in `etl.step_log`. After a failure, `python run.py` continues the same run and skips the finished steps (`pipeline/logger.py`, `run.py`) |
+| Restartable after a failed job or sub-job | Each step is its own transaction and is recorded in `etl.step_log`. After a failure, `python run.py` continues the same run and skips the finished steps; `python run.py --fresh` gives the failed run up and starts again from step 1 (`pipeline/logger.py`, `run.py`) |
 | Initial load | `python run.py` on an empty warehouse creates everything |
 | Handles erroneous data | Staging rules in `sql/staging/`; refused rows are kept in `etl.rejected_rows` with a reason; `dq/` then checks that no row was lost, that no step rejected more than 20% of its rows, and that the star schema is consistent. The reports are only rebuilt when these checks pass |
 | Tracks ETL metadata | `etl.run_log` and `etl.step_log`: start, end, status, row count, error message |
@@ -123,6 +123,11 @@ python run.py                        # continues the same run, skipping what is 
 
 Then look at `SELECT * FROM etl.step_log ORDER BY step_log_id`: `fact_sales` appears once as `failed`
 and once as `success`, under the same `run_id`.
+
+**When not to continue.** Continuing skips every step that already succeeded, so it keeps the data it
+read earlier and the SQL it ran earlier. If you fixed the source data, or the SQL of a step that
+had already succeeded, use `python run.py --fresh`: the failed run is marked `abandoned` in
+`etl.run_log` and a new run starts from step 1. The deploy always uses `--fresh`.
 
 ### The bad data
 
@@ -224,11 +229,14 @@ hand. Both warehouses read the same source database and web log.
 1. Work on the `dev` branch. Run `python run.py` and `python -m pytest -q` on your computer.
 2. `git push`. **CI** (`.github/workflows/ci.yml`) starts on GitHub: a fresh machine with its own
    empty PostgreSQL creates the databases, generates the data, loads the dev warehouse and runs the
-   tests. A green tick means the project builds from zero.
+   tests. It loads twice: first with the code of `main` (the previous release), then with your new
+   code on top of that warehouse. The second load is the **upgrade** that prod will go through, so a
+   change that only works on an empty database (for example renaming a mart column) turns CI red
+   instead of breaking the deploy. A green tick means the project builds from zero and upgrades.
 3. Open a pull request from `dev` to `main`. CI runs again and its result is shown on the pull request.
 4. Merge the pull request. This is the release decision.
 5. **CD** (`.github/workflows/deploy.yml`) starts: it loads the prod warehouse with the new code and
-   runs the tests against prod. Metabase now shows the result.
+   runs the tests against prod (the ones marked `made_up_data_only` are skipped there). Metabase now shows the result.
 
 **Why the deploy runs on your own computer.** The prod database is in Docker on your machine, and
 GitHub's servers cannot reach it. So the deploy job runs on a *self-hosted runner*: a small GitHub
