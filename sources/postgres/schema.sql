@@ -64,3 +64,28 @@ CREATE TABLE b2b.users (
   username   text PRIMARY KEY,
   company_id integer NOT NULL REFERENCES b2b.companies
 );
+
+-- CDC (change data capture): every insert, update or delete of an order or an order item is written
+-- into b2b.changes by a trigger. The warehouse remembers the last change_id it has applied, so its
+-- incremental load also catches orders that were edited or deleted, not only new ones.
+CREATE TABLE b2b.changes (
+  change_id  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,   -- goes up by one with every change
+  table_name text NOT NULL,                                     -- 'orders' or 'order_items'
+  operation  text NOT NULL,                                     -- 'INSERT', 'UPDATE' or 'DELETE'
+  order_id   integer NOT NULL,                                  -- the order that changed
+  changed_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Runs after every changed row. NEW is the row after the change; a DELETE has none, so OLD (the row
+-- before) gives the order id.
+CREATE FUNCTION b2b.record_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO b2b.changes (table_name, operation, order_id)
+  VALUES (TG_TABLE_NAME, TG_OP, coalesce(NEW.order_id, OLD.order_id));
+  RETURN NULL;  -- an AFTER trigger does not change the row
+END $$;
+
+CREATE TRIGGER orders_changes AFTER INSERT OR UPDATE OR DELETE ON b2b.orders
+  FOR EACH ROW EXECUTE FUNCTION b2b.record_change();
+CREATE TRIGGER order_items_changes AFTER INSERT OR UPDATE OR DELETE ON b2b.order_items
+  FOR EACH ROW EXECUTE FUNCTION b2b.record_change();

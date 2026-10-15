@@ -1,5 +1,6 @@
 #!/bin/bash
-# New data arrives and only the new rows are loaded. Run it after a full load (that writes the watermarks).
+# New orders arrive and old ones are edited or deleted: only the changes are loaded (CDC).
+# Run it after a full load (that writes the watermarks).
 set -eo pipefail
 cd "$(dirname "$0")"
 source ./demo_settings.sh
@@ -12,7 +13,8 @@ echo "Before"
 counts
 
 $PY -m seed.add_new_data
-$PY run.py --incremental | grep -E "^Run|new rows|FAILED"
+$PY -m seed.change_old_orders
+$PY run.py --incremental | grep -E "^Run|changed orders|new rows|FAILED"
 
 echo "After"
 counts

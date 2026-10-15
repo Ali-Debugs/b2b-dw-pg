@@ -46,9 +46,17 @@ def load_log_file(warehouse, step_name):
                     broken_lines.append((step_name, "line is not in Apache combined format", line.strip()))
 
     cur.executemany("INSERT INTO etl.rejected_rows (step_name, reason, row_data) VALUES (%s, %s, %s)", broken_lines)
+    save_latest_log_time(warehouse, step_name)
 
 
 # --- Incremental load ---
+
+
+def save_latest_log_time(warehouse, step_name):
+    """The watermark of the log: the latest log time now in raw."""
+    latest = warehouse.execute(f"SELECT max(log_time::timestamptz) FROM raw.{step_name}").fetchone()[0]
+    if latest is not None:
+        watermark.save(warehouse, step_name, latest.isoformat())
 
 
 def load_new_log_lines(warehouse, step_name):
@@ -75,4 +83,5 @@ def load_new_log_lines(warehouse, step_name):
                     new_lines += 1
 
     cur.executemany("INSERT INTO etl.rejected_rows (step_name, reason, row_data) VALUES (%s, %s, %s)", broken_lines)
+    save_latest_log_time(warehouse, step_name)
     print(f"    {step_name}: {new_lines} new rows (after {last_time})")

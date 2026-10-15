@@ -4,7 +4,7 @@
     B2B_ENV=prod python run.py            the same, but load the PROD warehouse instead of DEV
     python run.py --fail-at fact_sales    stop on purpose at that step, to show the restart
     python run.py --fresh                 give up a failed run and start again from step 1
-    python run.py --incremental           fetch only the new orders and log lines (see the bottom block)
+    python run.py --incremental           fetch only what changed in the orders and the new log lines
 
 Each step is one .sql file. The step name is the file name without ".sql", and it is also the
 name of the table (or view) the file builds.
@@ -26,8 +26,8 @@ STEPS = [
     ("sql/raw/raw_end_customers.sql", extractor.copy_table),
     ("sql/raw/raw_products.sql", extractor.copy_table),
     ("sql/raw/raw_catalog_items.sql", extractor.copy_table),
-    ("sql/raw/raw_orders.sql", extractor.copy_table),
-    ("sql/raw/raw_order_items.sql", extractor.copy_table),
+    ("sql/raw/raw_orders.sql", extractor.copy_table_and_save_change_id),
+    ("sql/raw/raw_order_items.sql", extractor.copy_table_and_save_change_id),
     ("sql/raw/raw_users.sql", extractor.copy_table),
     ("sql/raw/raw_ip_country.sql", extractor.copy_csv),
     ("sql/raw/raw_web_logs.sql", log_parser.load_log_file),
@@ -80,11 +80,12 @@ HEADING_OF_FOLDER = {
 
 # --- Incremental load ---
 # The three raw tables that keep growing. A full run empties and reloads them like every other table.
-# An incremental run (python run.py --incremental) keeps their rows and only adds the new ones, using
-# the function named here. Everything after raw (staging, dimensions, facts) is rebuilt as usual.
+# An incremental run (python run.py --incremental) keeps their rows and only applies what is new, using
+# the function named here: the changed orders (CDC) and the new log lines. Each function also saves its
+# watermark. Everything after raw (staging, dimensions, facts) is rebuilt as usual.
 INCREMENTAL_WORK = {
-    "raw_orders": extractor.copy_new_rows,
-    "raw_order_items": extractor.copy_new_rows,
+    "raw_orders": extractor.apply_changes,
+    "raw_order_items": extractor.apply_changes,
     "raw_web_logs": log_parser.load_new_log_lines,
 }
 
@@ -102,13 +103,11 @@ def run_step(warehouse, sql_file, extra_work, incremental=False):
         return len(checks)  # for a quality step, the number of checks (it is saved as the row count)
 
     if incremental and step_name in INCREMENTAL_WORK:
-        INCREMENTAL_WORK[step_name](warehouse, step_name)  # --- Incremental load: add only the new rows
+        INCREMENTAL_WORK[step_name](warehouse, step_name)  # --- Incremental load: apply only what is new
     else:
         executor.run_sql_file(warehouse, sql_file)
         if extra_work:
             extra_work(warehouse, step_name)
-    if step_name in INCREMENTAL_WORK:
-        watermark.save(warehouse, step_name)  # --- Incremental load: remember how far this table is loaded
     table = f"{SCHEMA_OF_FOLDER[folder]}.{step_name}"
     return warehouse.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 

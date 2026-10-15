@@ -69,9 +69,10 @@ jobs:
       - name: Run the tests
         run: python -m pytest -q
 
-      - name: Change a company in the source and load again (tests the history)
+      - name: Change a company, a product and an end customer, then load again (tests the history)
         run: |
           python -m seed.change_company
+          python -m seed.change_product_and_customer
           python run.py
           python -m pytest -q
 
@@ -79,5 +80,11 @@ jobs:
       - name: Add new data and load only the new rows
         run: |
           python -m seed.add_new_data
+          python run.py --incremental
+          python -m pytest -q
+
+      - name: Edit and delete old orders, then load only the changes (tests CDC)
+        run: |
+          python -m seed.change_old_orders
           python run.py --incremental
           python -m pytest -q

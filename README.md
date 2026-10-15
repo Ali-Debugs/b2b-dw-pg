@@ -38,7 +38,7 @@ Each part is also a script of its own. They use the warehouse set in one place, 
 | `./rebuild_everything.sh` | Load everything from zero |
 | `./demo_show_database.sh` | The row counts per layer, the rejected rows and the three reports (only reads) |
 | `./demo_change_company.sh` | A company is renamed: the history is kept (run it once after a rebuild) |
-| `./demo_incremental_load.sh` | New orders and visits arrive: only the new rows are loaded |
+| `./demo_incremental_load.sh` | New orders arrive and old ones are edited or deleted: only the changes are loaded (CDC) |
 | `./demo_failure_and_restart.sh` | A run fails on purpose, continues, and starts over with `--fresh` |
 
 The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
@@ -57,7 +57,7 @@ time zone, which is also set in `config.yaml` (`timezone`), not in the time zone
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
 | `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
 | `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
-| `seed/` | Scripts that generate the source data and the log; `change_company.py` makes one change to show the history; `add_new_data.py` adds new orders and visits for an incremental load |
+| `seed/` | Scripts that generate the source data and the log; `change_company.py` and `change_product_and_customer.py` make changes to show the history; `add_new_data.py` adds new orders and visits and `change_old_orders.py` edits and deletes old orders, for an incremental load |
 | `sql/setup.sql` | Creates the schemas and the `etl` tables |
 | `sql/migrations/` | One-time changes to tables that already exist; each file runs once per warehouse |
 | `sql/raw/` | Empty copies of the source tables, every column as text |
@@ -84,7 +84,7 @@ access.log      ─┘            │
 |---|---|---|
 | Raw | `raw` | Exact copy of each source, all columns text, so nothing can fail to land |
 | Staging | `staging` | Gives every row a `reject_reason`; NULL means good. Good rows get real types |
-| Dimensions | `dw` | `dim_date`, `dim_country`, `dim_company` (keeps history), `dim_product`, `dim_end_customer`, `dim_device` |
+| Dimensions | `dw` | `dim_date`, `dim_country`, `dim_company`, `dim_product`, `dim_end_customer`, `dim_device` (company, product and end customer keep history) |
 | Facts | `dw` | `fact_sales` (one row per order item), `fact_logins` (one row per login) |
 | Marts | `mart` | Two wide views for the dashboard and three views that answer the three reports |
 
@@ -158,10 +158,12 @@ The seed scripts put wrong rows in on purpose. After a run, `run.py` prints what
 A row is also refused when the row it depends on was refused (for example the orders of a company with
 a broken CUIT). In every staging step: raw rows = good rows + rejected rows.
 
-## Company history (slowly changing dimension, type 2)
+## History (slowly changing dimension, type 2)
 
-`dw.dim_company` remembers how a company looked in the past. When its name, country, CUIT or supplier
-status changes in the source, the load does two things (`sql/dimensions/dim_company.sql`):
+`dw.dim_company`, `dw.dim_product` and `dw.dim_end_customer` remember how a company, a product and an
+end customer looked in the past. All three are built the same way. Take a company: when its name,
+country, CUIT or supplier status changes in the source, the load does two things
+(`sql/dimensions/dim_company.sql`):
 
 1. it closes the current row (`valid_to` = today, `is_current` = false)
 2. it adds a new row with the new values (`valid_from` = today, `is_current` = true)
@@ -171,54 +173,78 @@ So one company can have several rows. Each row has its own `company_key`, a key 
 picked by date: a sale points to the version that was valid on the day of the order. An old sale keeps
 the name and country the company had then.
 
+Products (name, default price, supplier) and end customers (document number, name, date of birth,
+company) work the same way, with `product_key` and `end_customer_key` in `fact_sales`. Date, country and
+device keep no history: a day never changes, and the country and device lists are only looked up.
+
 Try it:
 
 ```bash
-python -m seed.change_company     # renames company 10 and adds three orders dated now
+python -m seed.change_company                # renames company 10 and adds three orders dated now
+python -m seed.change_product_and_customer   # product 1 costs 10% more, end customer 1 gets a new name
 python run.py
 docker exec b2b-postgres psql -U b2b -d b2b_warehouse_dev -c \
   "SELECT company_key, company_name, valid_from, valid_to, is_current FROM dw.dim_company WHERE company_id = 10"
+docker exec b2b-postgres psql -U b2b -d b2b_warehouse_dev -c \
+  "SELECT product_key, product_name, default_price, valid_from, valid_to, is_current FROM dw.dim_product WHERE product_id = 1"
 ```
 
 The change is only noticed when the warehouse is loaded, so `valid_from` is the load date, not the
-moment the source was edited. Only companies keep history; the other dimensions are overwritten.
+moment the source was edited.
 
 **Migrations.** A table that already exists is not changed by `CREATE TABLE IF NOT EXISTS`. When a
 table needs a new shape, a file in `sql/migrations/` does it. `run.py` applies each file once per
 warehouse and records it in `etl.migrations`, so the change reaches prod by itself on the next deploy.
 
-## Incremental load
+## Incremental load (CDC)
 
 `python run.py` is the full load: it re-reads everything from the sources. `python run.py --incremental`
-fetches only what is new. It was added after the rest, so its code sits in clearly marked
-`--- Incremental load ---` blocks at the bottom of the files.
+loads only what changed. Its code sits in clearly marked `--- Incremental load ---` blocks at the
+bottom of the files.
 
 Three raw tables keep growing: `raw_orders`, `raw_order_items` and `raw_web_logs`. For each one the
-table `etl.watermark` remembers how far it is loaded (the highest order id, or the latest log time).
-An incremental run:
+table `etl.watermark` remembers how far it is loaded.
 
-1. does **not** empty these three tables
-2. reads the watermark and copies only the newer source rows (`copy_new_rows` in
-   `pipeline/extractor.py`, `load_new_log_lines` in `pipeline/log_parser.py`)
+**Orders and order items: change data capture (CDC).** In the source, a trigger writes every insert,
+update and delete of an order or an order item into the table `b2b.changes`
+(`sources/postgres/schema.sql`). Its `change_id` goes up by one with every change, so the watermark is
+simply the last `change_id` the warehouse has applied. An incremental run (`apply_changes` in
+`pipeline/extractor.py`):
+
+1. reads the orders that changed after the watermark
+2. deletes those orders from raw and copies them again from the source, as they are now: a new order
+   is added, an edited order gets its new values, and a deleted order stays gone
 3. saves the new watermark in the same transaction, so a failed step changes nothing and can be retried
 
-The small tables (companies, products, customers) are still copied in full, and everything after raw
-is rebuilt as usual. `etl.run_log.load_type` shows whether a run was `full` or `incremental`.
+**The web log** only ever grows at the end, so its watermark is the latest log time, and only the
+lines after it are added (`load_new_log_lines` in `pipeline/log_parser.py`).
+
+The small tables (companies, products, customers) are still copied in full, which already catches
+every change in them, and everything after raw is rebuilt as usual. `etl.run_log.load_type` shows
+whether a run was `full` or `incremental`.
 
 Try it:
 
 ```bash
-python run.py                   # full load; writes the watermarks
-python -m seed.add_new_data     # 20 new orders and 30 new website visits
-python run.py --incremental     # prints how many new rows each table got
+python run.py                       # full load; writes the watermarks
+python -m seed.add_new_data         # 20 new orders and 30 new website visits
+python -m seed.change_old_orders    # edits 3 old orders and deletes 1
+python run.py --incremental         # prints how many orders changed and how many log lines are new
 ```
+
+The change table is part of the source, so a source made before it existed needs one
+`./rebuild_everything.sh` (or `python -m seed.seed_postgres`) to get it.
 
 What it does not do:
 
-- **A changed old order is not noticed.** The watermark only sees new order ids.
 - **The log file is still read from the start;** only the new lines are loaded.
 - **Staging and the facts are still rebuilt** from raw. The saving is in not re-reading the sources.
 - **A deploy always runs a full load.** With no watermark yet, `--incremental` also falls back to full.
+- **A change written by a very long transaction can be missed.** The change ids are handed out when a
+  change is made, not when it is saved, so a transaction that saves late can leave a lower id behind
+  the watermark. Real systems read the database's own change stream (logical replication, for example
+  with Debezium), which is in the order things were saved. That is a separate system; the trigger keeps
+  this project small.
 
 ## Dev, prod and CI/CD
 
@@ -296,9 +322,11 @@ Every time you change a filter, Metabase runs a new query against the `mart` vie
 
 ## Kept simple on purpose
 
-- **Incremental only up to raw.** An incremental run fetches only new source rows, but staging and the
-  facts are still rebuilt from raw on every run.
-- **Only companies keep history.** The other dimensions are overwritten and use the source ids as keys.
+- **Incremental only up to raw.** An incremental run fetches only what changed in the sources, but
+  staging and the facts are still rebuilt from raw on every run.
+- **Date, country and device keep no history.** Company, product and end customer do.
+- **A dimension row that disappears from the source keeps its current version.** History is kept for
+  changes, not for deletes.
 - **A "login" is one visit of a logged-in user.** The request line is out of scope in the brief, so a
   login page cannot be recognised. Instead, the log lines of one user are grouped: a line starts a new
   login when the user's line before it is more than 30 minutes older (`sql/facts/fact_logins.sql`).
