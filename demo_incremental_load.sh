@@ -1,0 +1,19 @@
+#!/bin/bash
+# New data arrives and only the new rows are loaded. Run it after a full load (that writes the watermarks).
+set -eo pipefail
+cd "$(dirname "$0")"
+source ./demo_settings.sh
+
+counts() {
+  show "SELECT (SELECT count(DISTINCT order_id) FROM mart.mart_sales) AS orders, (SELECT count(*) FROM mart.mart_logins) AS logins"
+}
+
+echo "Before"
+counts
+
+$PY -m seed.add_new_data
+$PY run.py --incremental | grep -E "^Run|new rows|FAILED"
+
+echo "After"
+counts
+show "SELECT table_name, value FROM etl.watermark ORDER BY 1"

@@ -28,6 +28,19 @@ python -m pytest -q               # 4. check the result
 `./rebuild_everything.sh` does the whole thing in one go: it wipes the sources and both warehouses,
 generates the data again, then loads and tests dev and prod. It asks for confirmation first.
 
+**Demo scripts.** To show the project from start to finish, run `./demo_everything.sh`: it runs the
+parts below one after the other and waits for Enter between them, so you can talk and show Metabase.
+Each part is also a script of its own. They use the warehouse set in one place, `demo_settings.sh`
+(`ENVIRONMENT=prod` or `dev`); change that one line to switch.
+
+| Script | What it shows |
+|---|---|
+| `./rebuild_everything.sh` | Load everything from zero |
+| `./demo_show_database.sh` | The row counts per layer, the rejected rows and the three reports (only reads) |
+| `./demo_change_company.sh` | A company is renamed: the history is kept (run it once after a rebuild) |
+| `./demo_incremental_load.sh` | New orders and visits arrive: only the new rows are loaded |
+| `./demo_failure_and_restart.sh` | A run fails on purpose, continues, and starts over with `--fresh` |
+
 The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
 about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The sizes are in
 `config.yaml`; make them bigger to test volume. Orders and log lines are dated in the business
@@ -96,8 +109,6 @@ Assumptions behind report 2 (the brief leaves these open):
 - A sale belongs to the country of the company that placed the order.
 - "Popular" means the highest total quantity sold.
 - The view shows the top 5 products, over all the data that is loaded.
-
-The entity relationship diagrams of the source and the warehouse are in [docs/erd.md](docs/erd.md).
 
 ## How each requirement is met
 
