@@ -8,14 +8,14 @@ source:            # the B2B platform database (OLTP)
   password: b2b_local
 
 # Two warehouses. Which one is used is decided by the environment variable B2B_ENV (dev or prod).
-warehouse_dev:     # DEV: where changes are tried and tested first (the default)
+warehouse_dev:     # DEV: where changes are tried and tested first (the default; the demo runs here)
   host: localhost
   port: 5432
   dbname: b2b_warehouse_dev
   user: b2b
   password: b2b_local
 
-warehouse_prod:    # PROD: the live warehouse that the Metabase dashboard reads
+warehouse_prod:    # PROD: the live warehouse (the dashboard for the real numbers reads it)
   host: localhost
   port: 5432
   dbname: b2b_warehouse_prod

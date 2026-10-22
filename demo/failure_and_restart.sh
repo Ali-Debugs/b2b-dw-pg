@@ -1,8 +1,8 @@
 #!/bin/bash
 # A run fails and is continued, then fails again and is started over. It waits so you can show Metabase.
 set -eo pipefail
-cd "$(dirname "$0")"
-source ./demo_settings.sh
+cd "$(dirname "$0")/.."   # work from the project folder
+source demo/settings.sh
 
 echo "A run that fails on purpose"
 $PY run.py --fail-at fact_sales | grep -E "^Run|FAILED" || true

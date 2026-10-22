@@ -2,8 +2,8 @@
 # New orders arrive and old ones are edited or deleted: only the changes are loaded (CDC).
 # Run it after a full load (that writes the watermarks).
 set -eo pipefail
-cd "$(dirname "$0")"
-source ./demo_settings.sh
+cd "$(dirname "$0")/.."   # work from the project folder
+source demo/settings.sh
 
 counts() {
   show "SELECT (SELECT count(DISTINCT order_id) FROM mart.mart_sales) AS orders, (SELECT count(*) FROM mart.mart_logins) AS logins"

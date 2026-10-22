@@ -126,6 +126,7 @@ def print_layer(folder, ran, skipped, seconds, checks):
 
 def main():
     parser = argparse.ArgumentParser(description="Load the B2B data warehouse")
+    # --fail-at is only for showing the restart: without it, nothing in the run changes
     parser.add_argument("--fail-at", metavar="STEP", help="fail on purpose at this step (to demo the restart)")
     parser.add_argument("--incremental", action="store_true", help="fetch only new orders and log lines")
     parser.add_argument("--fresh", action="store_true", help="do not continue a failed run: start again from step 1")

@@ -69,22 +69,14 @@ jobs:
       - name: Run the tests
         run: python -m pytest -q
 
+      # The demo scripts themselves are run here, so they are tested and cannot break unnoticed.
       - name: Change a company, a product and an end customer, then load again (tests the history)
         run: |
-          python -m seed.change_company
-          python -m seed.change_product_and_customer
-          python run.py
+          ./demo/history.sh
           python -m pytest -q
 
       # --- Incremental load ---
-      - name: Add new data and load only the new rows
+      - name: Add new orders, edit and delete old ones, then load only the changes (tests CDC)
         run: |
-          python -m seed.add_new_data
-          python run.py --incremental
-          python -m pytest -q
-
-      - name: Edit and delete old orders, then load only the changes (tests CDC)
-        run: |
-          python -m seed.change_old_orders
-          python run.py --incremental
+          ./demo/incremental_load.sh
           python -m pytest -q

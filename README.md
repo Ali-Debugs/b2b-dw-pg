@@ -28,18 +28,19 @@ python -m pytest -q               # 4. check the result
 `./rebuild_everything.sh` does the whole thing in one go: it wipes the sources and both warehouses,
 generates the data again, then loads and tests dev and prod. It asks for confirmation first.
 
-**Demo scripts.** To show the project from start to finish, run `./demo_everything.sh`: it runs the
-parts below one after the other and waits for Enter between them, so you can talk and show Metabase.
-Each part is also a script of its own. They use the warehouse set in one place, `demo_settings.sh`
-(`ENVIRONMENT=prod` or `dev`); change that one line to switch.
+**Demo scripts** (folder `demo/`). One script per feature, so each one can be seen working with a
+single command. Run `./rebuild_everything.sh` first, then each demo once, in this order: they change the
+source data, and the history demo run twice on the same day makes an empty version. They use the
+warehouse set in one line of `demo/settings.sh` (`ENVIRONMENT=dev` or `prod`), and CI runs the history and
+CDC demos on every push, so they stay working.
 
 | Script | What it shows |
 |---|---|
 | `./rebuild_everything.sh` | Load everything from zero |
-| `./demo_show_database.sh` | The row counts per layer, the rejected rows and the three reports (only reads) |
-| `./demo_change_company.sh` | A company is renamed: the history is kept (run it once after a rebuild) |
-| `./demo_incremental_load.sh` | New orders arrive and old ones are edited or deleted: only the changes are loaded (CDC) |
-| `./demo_failure_and_restart.sh` | A run fails on purpose, continues, and starts over with `--fresh` |
+| `./demo/show_database.sh` | The row counts per layer, the rejected rows and the three reports (only reads) |
+| `./demo/history.sh` | A company, a product and an end customer change: their history is kept |
+| `./demo/incremental_load.sh` | New orders arrive and old ones are edited or deleted: only the changes are loaded (CDC) |
+| `./demo/failure_and_restart.sh` | A run fails on purpose, continues, and starts over with `--fresh` (waits for Enter so you can show the dashboard) |
 
 The made-up data is a small business so the numbers are easy to read: 30 companies, 60 products,
 about 85 orders a month (roughly 30,000 in sales) and 3,000 website visits. The sizes are in
@@ -57,6 +58,7 @@ time zone, which is also set in `config.yaml` (`timezone`), not in the time zone
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
 | `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
 | `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
+| `demo/` | One script per feature for a demo, their shared `settings.sh`, and `show.py`, which prints a query result |
 | `seed/` | Scripts that generate the source data and the log; `change_company.py` and `change_product_and_customer.py` make changes to show the history; `add_new_data.py` adds new orders and visits and `change_old_orders.py` edits and deletes old orders, for an incremental load |
 | `sql/setup.sql` | Creates the schemas and the `etl` tables |
 | `sql/migrations/` | One-time changes to tables that already exist; each file runs once per warehouse |
@@ -252,7 +254,7 @@ There are two warehouses in the same PostgreSQL server, and two git branches.
 
 | | DEV | PROD |
 |---|---|---|
-| Purpose | Try and test changes | The live warehouse behind the Metabase dashboard |
+| Purpose | Try and test changes; the demo runs here | The live warehouse with the real numbers |
 | Database | `b2b_warehouse_dev` | `b2b_warehouse_prod` |
 | Git branch | `dev` | `main` |
 | Loaded by | you, with `python run.py` | GitHub, after a merge to `main` |
@@ -289,9 +291,10 @@ dashboard once by clicking. Menu names can differ a little between Metabase vers
 **1. Connect (once)**
 
 1. Open http://localhost:3000 (the first start takes about a minute) and create your admin user.
-2. Add the database: type **PostgreSQL**, host `postgres`, port `5432`, database name `b2b_warehouse_prod`
-   (the dashboard shows the live data),
-   username `b2b`, password `b2b_local`. The host is `postgres` (the container name), not `localhost`.
+2. Add the database: type **PostgreSQL**, host `postgres`, port `5432`, username `b2b`, password
+   `b2b_local`. The host is `postgres` (the container name), not `localhost`. Use the database name
+   `b2b_warehouse_dev` for the demo dashboard (the demo scripts change DEV), and add
+   `b2b_warehouse_prod` as a second database for the live numbers.
 
 **2. Make the four charts** (New -> Question, pick the table, then Summarize)
 
