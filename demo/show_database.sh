@@ -1,8 +1,8 @@
 #!/bin/bash
 # Look inside the warehouse. Only reads.
 set -eo pipefail
-cd "$(dirname "$0")"
-source ./demo_settings.sh
+cd "$(dirname "$0")/.."   # work from the project folder
+source demo/settings.sh
 
 echo "Orders: raw = staging + rejected"
 show "SELECT 'raw' AS layer, count(*) FROM raw.raw_orders

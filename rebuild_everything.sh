@@ -8,6 +8,7 @@
 
 set -e                 # stop at the first command that fails
 cd "$(dirname "$0")"   # always work from the project folder
+unset B2B_ENV          # the DEV steps below must not inherit a B2B_ENV=prod from your terminal
 PY=.venv/bin/python
 
 echo "This deletes ALL data: the source database, the web log, the DEV warehouse and the PROD warehouse."
