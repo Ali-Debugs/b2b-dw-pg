@@ -8,7 +8,7 @@ import pytest
 
 from pipeline import executor
 from pipeline.log_parser import parse_line
-from sources.postgres.connection import ENV, connect_warehouse
+from sources.postgres.connection import ENV, connect_source, connect_warehouse
 
 # Most tests below are true for any data, so they also run against PROD after a deploy.
 # A few only make sense for the made-up data (they count on its bad rows and its size): they are
@@ -120,32 +120,47 @@ def test_the_same_user_never_has_two_logins_less_than_30_minutes_apart():
     assert too_close == 0
 
 
-def test_every_company_has_one_current_version_and_no_overlapping_versions():
-    not_one_current = query("""
-        SELECT count(*) FROM (
-          SELECT company_id FROM dw.dim_company GROUP BY company_id
-          HAVING count(*) FILTER (WHERE is_current) <> 1) AS wrong
-    """)[0][0]
-    assert not_one_current == 0
-    # two versions of the same company must never be valid on the same day
-    overlapping = query("""
-        SELECT count(*) FROM dw.dim_company a
-        JOIN dw.dim_company b ON b.company_id = a.company_id AND b.company_key > a.company_key
-        WHERE a.valid_from < b.valid_to AND b.valid_from < a.valid_to
-    """)[0][0]
-    assert overlapping == 0
+# The dimensions that keep history: (table, source id, warehouse key)
+DIMENSIONS_WITH_HISTORY = [
+    ("dim_company", "company_id", "company_key"),
+    ("dim_product", "product_id", "product_key"),
+    ("dim_end_customer", "end_customer_id", "end_customer_key"),
+]
 
 
-def test_every_sale_and_login_points_to_the_company_version_of_its_day():
-    # this is what keeps the history: an old sale stays with the name the company had then
-    for fact in ["fact_sales", "fact_logins"]:
+def test_every_dimension_with_history_has_one_current_version_and_no_overlapping_versions():
+    for table, source_id, key in DIMENSIONS_WITH_HISTORY:
+        not_one_current = query(f"""
+            SELECT count(*) FROM (
+              SELECT {source_id} FROM dw.{table} GROUP BY {source_id}
+              HAVING count(*) FILTER (WHERE is_current) <> 1) AS wrong
+        """)[0][0]
+        assert not_one_current == 0, table
+        # two versions of the same thing must never be valid on the same day
+        overlapping = query(f"""
+            SELECT count(*) FROM dw.{table} a
+            JOIN dw.{table} b ON b.{source_id} = a.{source_id} AND b.{key} > a.{key}
+            WHERE a.valid_from < b.valid_to AND b.valid_from < a.valid_to
+        """)[0][0]
+        assert overlapping == 0, table
+
+
+def test_every_sale_and_login_points_to_the_versions_of_its_day():
+    # this is what keeps the history: an old sale stays with the names and prices of that day
+    links = [
+        ("fact_sales", "dim_company", "company_key"),
+        ("fact_sales", "dim_product", "product_key"),
+        ("fact_sales", "dim_end_customer", "end_customer_key"),
+        ("fact_logins", "dim_company", "company_key"),
+    ]
+    for fact, table, key in links:
         wrong = query(f"""
             SELECT count(*) FROM dw.{fact} f
-            JOIN dw.dim_company c ON c.company_key = f.company_key
-            JOIN dw.dim_date d    ON d.date_key = f.date_key
-            WHERE d.full_date < c.valid_from OR d.full_date >= c.valid_to
+            JOIN dw.{table} v  ON v.{key} = f.{key}
+            JOIN dw.dim_date d ON d.date_key = f.date_key
+            WHERE d.full_date < v.valid_from OR d.full_date >= v.valid_to
         """)[0][0]
-        assert wrong == 0, fact
+        assert wrong == 0, f"{fact} -> {table}"
 
 
 def test_every_data_quality_check_finds_zero_bad_rows():
@@ -165,14 +180,33 @@ def test_every_data_quality_check_finds_zero_bad_rows():
 # --- Incremental load ---
 
 
-def test_each_watermark_matches_what_is_loaded_in_raw():
+def test_each_growing_table_has_its_watermark():
     saved = dict(query("SELECT table_name, value FROM etl.watermark"))
     assert set(saved) == {"raw_orders", "raw_order_items", "raw_web_logs"}
-    assert saved["raw_orders"] == str(query("SELECT max(order_id::integer) FROM raw.raw_orders")[0][0])
-    assert saved["raw_order_items"] == str(query("SELECT max(order_id::integer) FROM raw.raw_order_items")[0][0])
     assert saved["raw_web_logs"] == query("SELECT max(log_time::timestamptz) FROM raw.raw_web_logs")[0][0].isoformat()
+    # the order watermarks are change ids (CDC): never past the last change in the source
+    with connect_source() as source:
+        last_change = source.execute("SELECT max(change_id) FROM b2b.changes").fetchone()[0]
+    assert int(saved["raw_orders"]) <= last_change
+    assert int(saved["raw_order_items"]) <= last_change
 
 
-def test_incremental_loads_never_load_an_order_twice():
+def test_raw_orders_and_order_items_are_the_same_as_the_source():
+    # After a full load or an incremental one (CDC), raw holds the source as it is now: new, edited and
+    # deleted orders included. (Run the tests right after a load, before the source changes again.)
+    with connect_source() as source:
+        source_orders = source.execute("SELECT count(*), sum(order_id), count(order_date) FROM b2b.orders").fetchone()
+        source_items = source.execute("SELECT count(*), sum(quantity), sum(unit_price) FROM b2b.order_items").fetchone()
+    raw_orders = query("SELECT count(*), sum(order_id::integer), count(order_date) FROM raw.raw_orders")[0]
+    raw_items = query("SELECT count(*), sum(quantity::integer), sum(unit_price::numeric) FROM raw.raw_order_items")[0]
+    assert raw_orders == source_orders
+    assert raw_items == source_items
+
+
+def test_incremental_loads_never_load_an_order_or_an_order_line_twice():
     doubles = query("SELECT count(*) FROM (SELECT order_id FROM raw.raw_orders GROUP BY 1 HAVING count(*) > 1) AS d")
+    assert doubles[0][0] == 0
+    doubles = query("""
+        SELECT count(*) FROM (SELECT order_id, line_number FROM raw.raw_order_items GROUP BY 1, 2 HAVING count(*) > 1) AS d
+    """)
     assert doubles[0][0] == 0

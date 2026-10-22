@@ -13,12 +13,12 @@ WHERE NOT EXISTS (SELECT 1 FROM dw.dim_company c WHERE c.company_key = f.company
 UNION ALL
 SELECT 'fact_sales: product not in dim_product', count(*)
 FROM dw.fact_sales f
-WHERE NOT EXISTS (SELECT 1 FROM dw.dim_product p WHERE p.product_id = f.product_id)
+WHERE NOT EXISTS (SELECT 1 FROM dw.dim_product p WHERE p.product_key = f.product_key)
 
 UNION ALL
 SELECT 'fact_sales: end customer not in dim_end_customer', count(*)
 FROM dw.fact_sales f
-WHERE NOT EXISTS (SELECT 1 FROM dw.dim_end_customer e WHERE e.end_customer_id = f.end_customer_id)
+WHERE NOT EXISTS (SELECT 1 FROM dw.dim_end_customer e WHERE e.end_customer_key = f.end_customer_key)
 
 UNION ALL
 SELECT 'fact_logins: date not in dim_date', count(*)
