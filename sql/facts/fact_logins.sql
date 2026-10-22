@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS dw.fact_logins (
   username     text NOT NULL,
   company_key  integer NOT NULL,
   device_key   integer NOT NULL,
-  country_code text NOT NULL
+  country_code text NOT NULL,
+  PRIMARY KEY (username, login_time)  -- a user cannot start two logins at the same moment
 );
 CREATE INDEX IF NOT EXISTS fact_logins_date ON dw.fact_logins (date_key);
 TRUNCATE dw.fact_logins;
