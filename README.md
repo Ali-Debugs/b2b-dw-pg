@@ -58,6 +58,7 @@ time zone, which is also set in `config.yaml` (`timezone`), not in the time zone
 | `sources/csv/ip_country.csv` | Lookup: first number of an IP address -> country |
 | `~/b2b_weblogs/access.log` | The generated web log. It is outside the project, like the log of a real web server |
 | `.github/workflows/` | `ci.yml` (test on dev) and `deploy.yml` (load prod) |
+| `docs/` | The project documents: source analysis, logical and physical model, source-to-target mapping (Excel), development, unit test and integration test |
 | `demo/` | One script per feature for a demo, their shared `settings.sh`, and `show.py`, which prints a query result |
 | `seed/` | Scripts that generate the source data and the log; `change_company.py` and `change_product_and_customer.py` make changes to show the history; `add_new_data.py` adds new orders and visits and `change_old_orders.py` edits and deletes old orders, for an incremental load |
 | `sql/setup.sql` | Creates the schemas and the `etl` tables |
