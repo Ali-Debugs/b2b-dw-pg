@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS etl.rejected_rows (
 );
 
 -- --- Incremental load ---
--- How far each growing table has been loaded: the highest order id, or the latest log time.
+-- How far each growing table has been loaded: the last change id (orders, order items), or the latest log time (web log).
 -- An incremental run reads this, fetches only what is newer, and moves it forward.
 CREATE TABLE IF NOT EXISTS etl.watermark (
   table_name text PRIMARY KEY,
